@@ -19,6 +19,8 @@ pub use orange_paper::{
     Property,
     PropertyType,
     ExtractedConstant,
+    StandaloneProperty,
+    StandalonePropertyType,
 };
 
 // Re-export Rust contract parsing (for future use in verification)

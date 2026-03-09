@@ -64,8 +64,8 @@ mod tests {
 
     #[test]
     fn test_cache_key() {
-        let path = Path::new("/tmp/test.md");
-        let key = SpecCache::cache_key(path);
+        let path = env::temp_dir().join("blvm_test.md");
+        let key = SpecCache::cache_key(&path);
         assert!(!key.is_empty());
     }
 

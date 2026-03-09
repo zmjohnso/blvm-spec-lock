@@ -6,6 +6,55 @@
 use regex::Regex;
 use std::collections::HashMap;
 
+/// Parse round-trip formula: \text{Outer}(\text{Inner}(x)) = x or (tx, w)
+/// Returns (property_type, outer_func, inner_func, constraint)
+fn parse_round_trip_formula(formula: &str) -> (StandalonePropertyType, Option<String>, Option<String>, Option<String>) {
+    // Match \text{FunctionName} - capture names (filter out common non-functions like "inputs", "valid")
+    let text_func_re = Regex::new(r"\\text\{([^}]+)\}").ok().unwrap();
+    let non_functions = ["inputs", "outputs", "valid", "invalid", "value"];
+    let func_names: Vec<String> = text_func_re
+        .captures_iter(formula)
+        .map(|c| c.get(1).unwrap().as_str().to_string())
+        .filter(|s| !non_functions.contains(&s.as_str()))
+        .collect();
+
+    // Round-trip: Outer(Inner(x)) = x → outer is first \text{} (wraps the rest), inner is second
+    if func_names.len() >= 2 {
+        let outer = func_names.first().cloned();
+        let inner = func_names.get(1).cloned();
+        if outer.is_some() && inner.is_some() {
+            // Check for constraint: |w| = |tx.inputs| or similar
+            let constraint = if formula.contains("|w|") && formula.contains("|tx") {
+                Some("|w| = |tx.inputs|".to_string())
+            } else if formula.contains("implies") || formula.contains("⟹") {
+                formula
+                    .split("implies")
+                    .next()
+                    .or_else(|| formula.split("⟹").next())
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            };
+            return (StandalonePropertyType::RoundTrip, outer, inner, constraint);
+        }
+    }
+
+    // Idempotent: F(F(x)) = F(x) - same func name appears twice in nesting
+    if func_names.len() >= 1 {
+        let first = &func_names[0];
+        if formula.matches(first).count() >= 2 {
+            return (
+                StandalonePropertyType::Idempotent,
+                func_names.first().cloned(),
+                func_names.first().cloned(),
+                None,
+            );
+        }
+    }
+
+    (StandalonePropertyType::Other, None, None, None)
+}
+
 /// A function specification from the Orange Paper
 #[derive(Debug, Clone)]
 pub struct FunctionSpec {
@@ -89,6 +138,34 @@ pub struct SpecParser {
     sections: HashMap<String, SpecSection>,
 }
 
+/// Standalone property block (e.g. **Property** (Name): ... $$...$$)
+#[derive(Debug, Clone)]
+pub struct StandaloneProperty {
+    /// Property name (e.g. "SegWit Transaction Serialization Round-Trip")
+    pub name: String,
+    /// Section ID (e.g., "8.2.2")
+    pub section_id: String,
+    /// Raw LaTeX formula from $$...$$
+    pub formula_raw: String,
+    /// Parsed property type
+    pub property_type: StandalonePropertyType,
+    /// For round-trip: outer function (e.g. DeserializeTransactionWithWitness)
+    pub outer_func: Option<String>,
+    /// For round-trip: inner function (e.g. SerializeTransactionWithWitness)
+    pub inner_func: Option<String>,
+    /// Constraint from formula (e.g. |w| = |tx.inputs|)
+    pub constraint: Option<String>,
+}
+
+/// Type of standalone property
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StandalonePropertyType {
+    RoundTrip,
+    Idempotent,
+    Ordering,
+    Other,
+}
+
 /// A section from the Orange Paper
 #[derive(Debug, Clone)]
 pub struct SpecSection {
@@ -102,6 +179,8 @@ pub struct SpecSection {
     pub theorems: Vec<Theorem>,
     /// Constants in this section
     pub constants: Vec<ExtractedConstant>,
+    /// Standalone properties (e.g. **Property** (Name): ... $$...$$)
+    pub standalone_properties: Vec<StandaloneProperty>,
     /// Raw content
     pub content: String,
 }
@@ -168,6 +247,7 @@ impl SpecParser {
                     functions: Vec::new(),
                     theorems: Vec::new(),
                     constants: Vec::new(),
+                    standalone_properties: Vec::new(),
                     content: String::new(),
                 });
             } else if current_section.is_some() {
@@ -238,12 +318,16 @@ impl SpecParser {
         if section_id.starts_with("4.") {
             constants = self.extract_constants_from_section(section_id, content)?;
         }
+
+        // Extract standalone **Property** (Name): ... $$...$$ blocks
+        let standalone_properties = self.extract_standalone_properties(section_id, content)?;
         
-        // Update section with parsed functions and constants
+        // Update section with parsed functions, constants, and standalone properties
         if let Some(section) = self.sections.get_mut(section_id) {
             section.content = section_content;
             section.functions = functions;
             section.constants = constants;
+            section.standalone_properties = standalone_properties;
         }
         
         Ok(())
@@ -317,6 +401,49 @@ impl SpecParser {
         }
         
         Ok(constants)
+    }
+
+    /// Extract standalone **Property** (Name): ... $$...$$ blocks
+    fn extract_standalone_properties(&self, section_id: &str, content: &str) -> Result<Vec<StandaloneProperty>, String> {
+        let mut properties = Vec::new();
+        // Match **Property** (Name): - capture property name
+        let property_re = Regex::new(r"\*\*Property\*\*\s*\(([^)]+)\):")
+            .map_err(|e| format!("Regex error: {}", e))?;
+        let formula_re = Regex::new(r"\$\$([^$]+)\$\$")
+            .map_err(|e| format!("Regex error: {}", e))?;
+
+        for cap in property_re.captures_iter(content) {
+            let name = cap.get(1).unwrap().as_str().trim().to_string();
+            // Find position of this property in content
+            let match_start = cap.get(0).unwrap().start();
+            // Look for $$...$$ after this property (formula typically on next line)
+            let after_prop = &content[match_start..];
+            let formula_raw = formula_re
+                .captures(after_prop)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().trim().to_string())
+                .unwrap_or_default();
+
+            if formula_raw.is_empty() {
+                continue;
+            }
+
+            // Parse round-trip: \text{Outer}(\text{Inner}(x)) = x or (tx, w)
+            let (property_type, outer_func, inner_func, constraint) =
+                parse_round_trip_formula(&formula_raw);
+
+            properties.push(StandaloneProperty {
+                name,
+                section_id: section_id.to_string(),
+                formula_raw: formula_raw.clone(),
+                property_type,
+                outer_func,
+                inner_func,
+                constraint,
+            });
+        }
+
+        Ok(properties)
     }
     
     /// Parse constant value from mathematical notation to Rust expression
@@ -850,6 +977,15 @@ impl SpecParser {
             .unwrap_or_default()
     }
     
+    /// Get all standalone properties (round-trip, etc.) from all sections
+    pub fn get_all_standalone_properties(&self) -> Vec<&StandaloneProperty> {
+        let mut props = Vec::new();
+        for section in self.sections.values() {
+            props.extend(section.standalone_properties.iter());
+        }
+        props
+    }
+
     /// Extract all functions with formulas from Orange Paper
     pub fn extract_functions_with_formulas(&self) -> Vec<&FunctionSpec> {
         let mut functions = Vec::new();

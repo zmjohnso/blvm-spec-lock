@@ -41,6 +41,7 @@ thiserror = "1.0"
 
 # File system and path utilities
 walkdir = "2.4"
+toml = "0.8"
 
 [features]
 default = []

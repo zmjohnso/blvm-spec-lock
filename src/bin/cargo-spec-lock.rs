@@ -22,11 +22,28 @@ struct Cli {
     command: Commands,
 }
 
+/// Resolve crate path: --crate-path, or SPEC_LOCK_CRATE_PATH env, or current dir
+fn resolve_crate_path(crate_path: Option<PathBuf>) -> PathBuf {
+    crate_path
+        .or_else(|| std::env::var("SPEC_LOCK_CRATE_PATH").ok().map(PathBuf::from))
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+/// Resolve spec path: --spec-path, or SPEC_LOCK_SPEC_PATH env. Returns None if neither set.
+fn resolve_spec_path(spec_path: Option<PathBuf>) -> Option<PathBuf> {
+    spec_path
+        .or_else(|| std::env::var("SPEC_LOCK_SPEC_PATH").ok().map(PathBuf::from))
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Verify functions with #[spec_locked] attributes
     Verify {
-        /// Files to verify (default: all files in workspace)
+        /// Path to crate to scan (default: current dir, or SPEC_LOCK_CRATE_PATH)
+        #[arg(long)]
+        crate_path: Option<PathBuf>,
+
+        /// Files to verify (default: all files in crate)
         files: Vec<String>,
         
         /// Filter by subsystem
@@ -60,13 +77,21 @@ enum Commands {
     
     /// Show coverage report
     Coverage {
+        /// Path to crate to scan (default: current dir, or SPEC_LOCK_CRATE_PATH)
+        #[arg(long)]
+        crate_path: Option<PathBuf>,
+
         /// Output format
         #[arg(long, default_value = "human")]
         format: OutputFormat,
     },
     
-    /// List all verified functions
+    /// List all spec-locked functions
     List {
+        /// Path to crate to scan (default: current dir, or SPEC_LOCK_CRATE_PATH)
+        #[arg(long)]
+        crate_path: Option<PathBuf>,
+
         /// Filter by subsystem
         #[arg(long)]
         subsystem: Option<String>,
@@ -78,9 +103,13 @@ enum Commands {
     
     /// Check for spec drift (Orange Paper vs implementation)
     CheckDrift {
-        /// Path to Orange Paper (default: ../blvm-spec/THE_ORANGE_PAPER.md)
+        /// Path to Orange Paper (or SPEC_LOCK_SPEC_PATH env)
         #[arg(long)]
         spec_path: Option<PathBuf>,
+
+        /// Path to crate to scan (default: current dir, or SPEC_LOCK_CRATE_PATH)
+        #[arg(long)]
+        crate_path: Option<PathBuf>,
         
         /// Output format
         #[arg(long, default_value = "human")]
@@ -89,24 +118,40 @@ enum Commands {
     
     /// Extract constants from Orange Paper and generate Rust module
     ExtractConstants {
-        /// Path to Orange Paper (default: ../blvm-spec/THE_ORANGE_PAPER.md)
+        /// Path to Orange Paper (or SPEC_LOCK_SPEC_PATH env)
         #[arg(long)]
         spec_path: Option<PathBuf>,
         
-        /// Output file path (default: blvm-consensus/src/orange_paper_constants.rs)
+        /// Output file path (required, or SPEC_LOCK_OUTPUT env for constants)
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
     
     /// Extract formulas from Orange Paper and generate property test helpers
     ExtractFormulas {
-        /// Path to Orange Paper (default: ../blvm-spec/THE_ORANGE_PAPER.md)
+        /// Path to Orange Paper (or SPEC_LOCK_SPEC_PATH env)
         #[arg(long)]
         spec_path: Option<PathBuf>,
         
-        /// Output file path (default: blvm-consensus/src/orange_paper_property_helpers.rs)
+        /// Output file path (required unless SPEC_LOCK_OUTPUT env set for formulas)
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+
+    /// Extract property tests from Orange Paper round-trip properties
+    ExtractPropertyTests {
+        /// Path to Orange Paper (or SPEC_LOCK_SPEC_PATH env)
+        #[arg(long)]
+        spec_path: Option<PathBuf>,
+        /// Path to PROPERTY_BINDINGS.toml (default: same dir as spec, or --bindings)
+        #[arg(long)]
+        bindings_path: Option<PathBuf>,
+        /// Output file path (required)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Path to target crate for module paths (for binding resolution)
+        #[arg(long)]
+        crate_path: Option<PathBuf>,
     },
 }
 
@@ -137,6 +182,7 @@ fn main() {
 
     let exit_code = match cli.command {
         Commands::Verify { 
+            crate_path,
             files, 
             subsystem, 
             name, 
@@ -146,35 +192,52 @@ fn main() {
             timeout: _,
             verbose: _,
         } => {
-            handle_verify(files, subsystem, name, section, format)
+            handle_verify(resolve_crate_path(crate_path), files, subsystem, name, section, format)
         }
-        Commands::Coverage { format } => {
-            handle_coverage(format)
+        Commands::Coverage { crate_path, format } => {
+            handle_coverage(resolve_crate_path(crate_path), format)
         }
-        Commands::List { subsystem, section } => {
-            eprintln!("List command not yet implemented");
-            eprintln!("Subsystem: {:?}, Section: {:?}", subsystem, section);
-            1
+        Commands::List { crate_path, subsystem, section } => {
+            handle_list(resolve_crate_path(crate_path), subsystem, section)
         }
-        Commands::CheckDrift { spec_path, format } => {
-            handle_check_drift(spec_path.as_ref(), format)
+        Commands::CheckDrift { spec_path, crate_path, format } => {
+            handle_check_drift(
+                resolve_spec_path(spec_path),
+                resolve_crate_path(crate_path),
+                format,
+            )
         }
         Commands::ExtractConstants { spec_path, output } => {
-            handle_extract_constants(spec_path.as_ref(), output.as_ref())
+            handle_extract_constants(resolve_spec_path(spec_path), output)
         }
         Commands::ExtractFormulas { spec_path, output } => {
-            handle_extract_formulas(spec_path.as_ref(), output.as_ref())
+            handle_extract_formulas(resolve_spec_path(spec_path), output)
         }
+        Commands::ExtractPropertyTests {
+            spec_path,
+            bindings_path,
+            output,
+            crate_path: _,
+        } => handle_extract_property_tests(
+            resolve_spec_path(spec_path),
+            bindings_path,
+            output,
+        ),
     };
 
     std::process::exit(exit_code);
 }
 
-fn handle_check_drift(spec_path: Option<&PathBuf>, format: OutputFormat) -> i32 {
-    let workspace_root = std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
+fn handle_check_drift(spec_path: Option<PathBuf>, crate_path: PathBuf, format: OutputFormat) -> i32 {
+    let spec_path = match spec_path {
+        Some(p) => p,
+        None => {
+            eprintln!("Error: --spec-path or SPEC_LOCK_SPEC_PATH required for check-drift");
+            return 1;
+        }
+    };
 
-    let result = match cli::drift::detect_drift(&workspace_root, spec_path) {
+    let result = match cli::drift::detect_drift(&crate_path, Some(&spec_path)) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error detecting drift: {}", e);
@@ -207,11 +270,8 @@ fn handle_check_drift(spec_path: Option<&PathBuf>, format: OutputFormat) -> i32 
     }
 }
 
-fn handle_coverage(format: OutputFormat) -> i32 {
-    let workspace_root = std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-
-    let stats = match cli::coverage::generate_coverage(&workspace_root) {
+fn handle_coverage(crate_path: PathBuf, format: OutputFormat) -> i32 {
+    let stats = match cli::coverage::generate_coverage(&crate_path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Error generating coverage: {}", e);
@@ -233,19 +293,57 @@ fn handle_coverage(format: OutputFormat) -> i32 {
     0
 }
 
+fn handle_list(
+    crate_path: PathBuf,
+    subsystem: Option<String>,
+    section: Option<String>,
+) -> i32 {
+    let all_functions = match cli::verify::discover_functions(&crate_path) {
+        Ok(funcs) => funcs,
+        Err(e) => {
+            eprintln!("Error discovering functions: {}", e);
+            return 1;
+        }
+    };
+
+    let sections: Vec<String> = section.into_iter().collect();
+    let filtered = cli::filters::filter_functions(
+        all_functions,
+        subsystem.as_deref(),
+        None,
+        &sections,
+    );
+
+    if filtered.is_empty() {
+        eprintln!("No spec-locked functions found");
+        return 0;
+    }
+
+    // Sort by file, then function name
+    let mut sorted: Vec<_> = filtered.into_iter().collect();
+    sorted.sort_by(|a, b| {
+        a.file_path.cmp(&b.file_path)
+            .then_with(|| a.function_name.cmp(&b.function_name))
+    });
+
+    for f in &sorted {
+        let section_str = f.section.as_deref().unwrap_or("(no section)");
+        println!("{}\t{}\t{}", f.function_name, f.file_path.display(), section_str);
+    }
+    eprintln!("{} spec-locked function(s)", sorted.len());
+    0
+}
+
 fn handle_verify(
+    crate_path: PathBuf,
     files: Vec<String>,
     subsystem: Option<String>,
     name: Option<String>,
     sections: Vec<String>,
     format: OutputFormat,
 ) -> i32 {
-    // Find workspace root (simplified - would use cargo-metadata in full implementation)
-    let workspace_root = std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-
-    // Discover functions
-    let all_functions = match cli::verify::discover_functions(&workspace_root) {
+    // Discover functions from explicit crate path
+    let all_functions = match cli::verify::discover_functions(&crate_path) {
         Ok(funcs) => funcs,
         Err(e) => {
             eprintln!("Error discovering functions: {}", e);
@@ -296,19 +394,24 @@ fn handle_verify(
     }
 }
 
-fn handle_extract_constants(spec_path: Option<&PathBuf>, output_path: Option<&PathBuf>) -> i32 {
-    let workspace_root = std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-    
-    // Default spec path
-    let spec_path = spec_path
-        .cloned()
-        .unwrap_or_else(|| workspace_root.join("../blvm-spec/THE_ORANGE_PAPER.md"));
-    
-    // Default output path
+fn handle_extract_constants(spec_path: Option<PathBuf>, output_path: Option<PathBuf>) -> i32 {
+    let spec_path = match spec_path {
+        Some(p) => p,
+        None => {
+            eprintln!("Error: --spec-path or SPEC_LOCK_SPEC_PATH required for extract-constants");
+            return 1;
+        }
+    };
+
     let output_path = output_path
-        .cloned()
-        .unwrap_or_else(|| workspace_root.join("../blvm-consensus/src/orange_paper_constants.rs"));
+        .or_else(|| std::env::var("SPEC_LOCK_OUTPUT").ok().map(PathBuf::from));
+    let output_path = match output_path {
+        Some(p) => p,
+        None => {
+            eprintln!("Error: --output or SPEC_LOCK_OUTPUT required for extract-constants");
+            return 1;
+        }
+    };
     
     // Read Orange Paper
     let content = match std::fs::read_to_string(&spec_path) {
@@ -381,19 +484,24 @@ fn generate_constants_module(constants: &[&parser::orange_paper::ExtractedConsta
     code
 }
 
-fn handle_extract_formulas(spec_path: Option<&PathBuf>, output_path: Option<&PathBuf>) -> i32 {
-    let workspace_root = std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-    
-    // Default spec path
-    let spec_path = spec_path
-        .cloned()
-        .unwrap_or_else(|| workspace_root.join("../blvm-spec/THE_ORANGE_PAPER.md"));
-    
-    // Default output path
+fn handle_extract_formulas(spec_path: Option<PathBuf>, output_path: Option<PathBuf>) -> i32 {
+    let spec_path = match spec_path {
+        Some(p) => p,
+        None => {
+            eprintln!("Error: --spec-path or SPEC_LOCK_SPEC_PATH required for extract-formulas");
+            return 1;
+        }
+    };
+
     let output_path = output_path
-        .cloned()
-        .unwrap_or_else(|| workspace_root.join("../blvm-consensus/src/orange_paper_property_helpers.rs"));
+        .or_else(|| std::env::var("SPEC_LOCK_OUTPUT").ok().map(PathBuf::from));
+    let output_path = match output_path {
+        Some(p) => p,
+        None => {
+            eprintln!("Error: --output or SPEC_LOCK_OUTPUT required for extract-formulas");
+            return 1;
+        }
+    };
     
     // Read Orange Paper
     let content = match std::fs::read_to_string(&spec_path) {
@@ -589,6 +697,163 @@ fn generate_calculate_fee_helper() -> String {
     // Note: This is a placeholder - actual implementation needs input/output values
     // TODO: Implement with actual transaction inputs and outputs
     0")
+}
+
+fn handle_extract_property_tests(
+    spec_path: Option<PathBuf>,
+    bindings_path: Option<PathBuf>,
+    output_path: Option<PathBuf>,
+) -> i32 {
+    let spec_path = match spec_path {
+        Some(p) => p,
+        None => {
+            eprintln!("Error: --spec-path or SPEC_LOCK_SPEC_PATH required for extract-property-tests");
+            return 1;
+        }
+    };
+
+    let output_path = output_path
+        .or_else(|| std::env::var("SPEC_LOCK_OUTPUT").ok().map(PathBuf::from));
+    let output_path = match output_path {
+        Some(p) => p,
+        None => {
+            eprintln!("Error: --output or SPEC_LOCK_OUTPUT required for extract-property-tests");
+            return 1;
+        }
+    };
+
+    let bindings_path = bindings_path.unwrap_or_else(|| {
+        spec_path
+            .parent()
+            .map(|p| p.join("PROPERTY_BINDINGS.toml"))
+            .unwrap_or_else(|| PathBuf::from("PROPERTY_BINDINGS.toml"))
+    });
+
+    let content = match std::fs::read_to_string(&spec_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error reading Orange Paper from {}: {}", spec_path.display(), e);
+            return 1;
+        }
+    };
+
+    let mut parser = parser::orange_paper::SpecParser::new(content);
+    if let Err(e) = parser.parse() {
+        eprintln!("Error parsing Orange Paper: {}", e);
+        return 1;
+    }
+
+    let props = parser.get_all_standalone_properties();
+    let round_trips: Vec<_> = props
+        .iter()
+        .filter(|p| p.property_type == parser::orange_paper::StandalonePropertyType::RoundTrip)
+        .filter(|p| p.inner_func.is_some() && p.outer_func.is_some())
+        .map(|p| *p)
+        .collect();
+
+    // Load bindings
+    let bindings_content = match std::fs::read_to_string(&bindings_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error reading bindings from {}: {}", bindings_path.display(), e);
+            return 1;
+        }
+    };
+
+    let bindings: toml::Value = match toml::from_str(&bindings_content) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Error parsing bindings TOML: {}", e);
+            return 1;
+        }
+    };
+
+    let rust_code = generate_property_tests(&round_trips, &bindings);
+
+    if let Err(e) = std::fs::write(&output_path, rust_code) {
+        eprintln!("Error writing property tests to {}: {}", output_path.display(), e);
+        return 1;
+    }
+
+    eprintln!(
+        "✅ Generated {} round-trip property test(s) in {}",
+        round_trips.len(),
+        output_path.display()
+    );
+    0
+}
+
+fn get_binding(bindings: &toml::Value, func_name: &str) -> Option<String> {
+    let tbl = bindings.get("blvm_consensus")?.get("serialization")?;
+    tbl.get(func_name)?.as_str().map(String::from)
+}
+
+fn generate_property_tests(
+    round_trips: &[&parser::orange_paper::StandaloneProperty],
+    bindings: &toml::Value,
+) -> String {
+    let mut code = String::from("//! AUTO-GENERATED from Orange Paper - DO NOT EDIT\n");
+    code.push_str("//! Run: cargo spec-lock extract-property-tests --spec-path ... --output ...\n\n");
+    code.push_str("#![cfg(test)]\n");
+    code.push_str("#![cfg(feature = \"property-tests\")]\n");
+    code.push_str("use proptest::prelude::*;\n\n");
+
+    for prop in round_trips {
+        let inner = prop.inner_func.as_deref().unwrap_or("");
+        let outer = prop.outer_func.as_deref().unwrap_or("");
+        let inner_path = get_binding(bindings, inner).or_else(|| get_binding(bindings, &inner.replace("Header", "BlockHeader")));
+        let outer_path = get_binding(bindings, outer).or_else(|| get_binding(bindings, &outer.replace("Header", "BlockHeader")));
+
+        if inner_path.is_none() || outer_path.is_none() {
+            code.push_str(&format!("// Skipped {}: missing binding for {} or {}\n", prop.name, inner, outer));
+            continue;
+        }
+
+        let (inner_path, outer_path) = (inner_path.unwrap(), outer_path.unwrap());
+        let test_name = format!("prop_{}", prop.name.to_lowercase().replace(" ", "_").replace("-", "_").replace("(", "").replace(")", ""));
+
+        // Determine strategy and assertion based on property
+        if prop.constraint.is_some() && prop.name.contains("SegWit") {
+            // (tx, w) with |w| = |tx.inputs|
+            code.push_str(&format!("/// Property ({}) - Orange Paper {}\n", prop.name, prop.section_id));
+            code.push_str(&format!("#[test]\nfn {}() {{\n", test_name));
+            code.push_str("    proptest!(|((tx, w) in blvm_consensus::test_utils::transaction_with_witness_strategy())| {\n");
+            code.push_str(&format!("        let bytes = {}(&tx, &w);\n", inner_path.replace("::", "::")));
+            code.push_str(&format!("        let (tx2, w2, _) = {}(&bytes).unwrap();\n", outer_path.replace("::", "::")));
+            code.push_str("        prop_assert_eq!(tx, tx2);\n");
+            code.push_str("        prop_assert_eq!(w, w2);\n");
+            code.push_str("    });\n}\n\n");
+        } else if prop.name.contains("Transaction") && !prop.name.contains("SegWit") {
+            // tx only
+            code.push_str(&format!("/// Property ({}) - Orange Paper {}\n", prop.name, prop.section_id));
+            code.push_str(&format!("#[test]\nfn {}() {{\n", test_name));
+            code.push_str("    proptest!(|(tx in blvm_consensus::test_utils::transaction_strategy())| {\n");
+            code.push_str("        let bytes = blvm_consensus::serialization::serialize_transaction(&tx);\n");
+            code.push_str("        let tx2 = blvm_consensus::serialization::deserialize_transaction(&bytes).unwrap();\n");
+            code.push_str("        prop_assert_eq!(tx, tx2);\n");
+            code.push_str("    });\n}\n\n");
+        } else if prop.name.contains("Block Header") || prop.name.contains("Header") {
+            // BlockHeader - use proptest array strategy (version: i64, timestamp/bits/nonce: u64)
+            code.push_str(&format!("/// Property ({}) - Orange Paper {}\n", prop.name, prop.section_id));
+            code.push_str(&format!("#[test]\nfn {}() {{\n", test_name));
+            code.push_str("    use blvm_consensus::types::BlockHeader;\n");
+            code.push_str("    proptest!(|(v in any::<i64>(), prev in prop::array::uniform32(any::<u8>()), mr in prop::array::uniform32(any::<u8>()), ts in 0u64..u64::MAX, bits in any::<u64>(), nonce in any::<u64>())| {\n");
+            code.push_str("        let header = BlockHeader { version: v, prev_block_hash: prev, merkle_root: mr, timestamp: ts, bits, nonce };\n");
+            code.push_str("        let bytes = blvm_consensus::serialization::serialize_block_header(&header);\n");
+            code.push_str("        let header2 = blvm_consensus::serialization::deserialize_block_header(&bytes).unwrap();\n");
+            code.push_str("        prop_assert_eq!(header.version, header2.version);\n");
+            code.push_str("        prop_assert_eq!(header.prev_block_hash, header2.prev_block_hash);\n");
+            code.push_str("        prop_assert_eq!(header.merkle_root, header2.merkle_root);\n");
+            code.push_str("        prop_assert_eq!(header.timestamp, header2.timestamp);\n");
+            code.push_str("        prop_assert_eq!(header.bits, header2.bits);\n");
+            code.push_str("        prop_assert_eq!(header.nonce, header2.nonce);\n");
+            code.push_str("    });\n}\n\n");
+        } else {
+            code.push_str(&format!("// TODO: {} - add strategy\n", prop.name));
+        }
+    }
+
+    code
 }
 
 fn extract_formula_parameters(formula: &str, func_name: &str) -> Vec<String> {
