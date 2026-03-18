@@ -6,8 +6,8 @@
 //! - Option checks: `opt.is_some()`
 //! - Constant equality: `value == CONSTANT`
 
-use syn::Expr;
 use crate::parser::contracts::{Contract, ContractType};
+use syn::Expr;
 
 /// Result of a static check
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,9 +48,7 @@ fn check_requires_statically(expr: &Expr) -> Option<StaticCheckResult> {
             check_non_negative(&bin.left, &bin.right)
         }
         // Option check: opt.is_some()
-        Expr::MethodCall(method) => {
-            check_option_method(method)
-        }
+        Expr::MethodCall(method) => check_option_method(method),
         // Too complex - requires Z3
         _ => None,
     }
@@ -76,12 +74,12 @@ fn check_ensures_statically(expr: &Expr) -> Option<StaticCheckResult> {
 /// Check if an expression is a constant equality check
 fn check_constant_equality(left: &Expr, right: &Expr) -> Option<StaticCheckResult> {
     // Check if one side is a constant
-    let (constant, variable) = match (left, right) {
+    let (_constant, _variable) = match (left, right) {
         (Expr::Lit(_), _) => (left, right),
         (_, Expr::Lit(_)) => (right, left),
         _ => return None, // Not a constant equality
     };
-    
+
     // For now, we can't evaluate constants at compile time in the verification tool
     // This would require evaluating the actual Rust code, which is complex
     // Return RequiresZ3 to let Z3 handle it
@@ -89,7 +87,7 @@ fn check_constant_equality(left: &Expr, right: &Expr) -> Option<StaticCheckResul
 }
 
 /// Check if an expression is a bounds check (index < vec.len())
-fn check_bounds(left: &Expr, right: &Expr) -> Option<StaticCheckResult> {
+fn check_bounds(_left: &Expr, _right: &Expr) -> Option<StaticCheckResult> {
     // Pattern: index < vec.len() or vec.len() > index
     // This requires runtime information, so we can't check statically
     // Return RequiresZ3
@@ -110,7 +108,7 @@ fn check_non_negative(left: &Expr, right: &Expr) -> Option<StaticCheckResult> {
             }
         }
     }
-    
+
     // Check if left side is literal 0 (0 <= x)
     if let Expr::Lit(lit) = left {
         if let syn::Lit::Int(int_lit) = &lit.lit {
@@ -119,7 +117,7 @@ fn check_non_negative(left: &Expr, right: &Expr) -> Option<StaticCheckResult> {
             }
         }
     }
-    
+
     None
 }
 
@@ -131,7 +129,7 @@ fn check_option_method(method: &syn::ExprMethodCall) -> Option<StaticCheckResult
         // This requires runtime information
         return Some(StaticCheckResult::RequiresZ3);
     }
-    
+
     None
 }
 
@@ -148,7 +146,7 @@ mod tests {
             condition: expr,
             comment: None,
         };
-        
+
         let result = check_contract_statically(&contract);
         // Should require Z3 (can't evaluate constants statically)
         assert_eq!(result, Some(StaticCheckResult::RequiresZ3));
@@ -162,10 +160,9 @@ mod tests {
             condition: expr,
             comment: None,
         };
-        
+
         let result = check_contract_statically(&contract);
         // Should require Z3 (needs type information)
         assert_eq!(result, Some(StaticCheckResult::RequiresZ3));
     }
 }
-

@@ -1,10 +1,11 @@
 //! Coverage reporting for spec-locked functions
 //!
 //! Reports which functions are spec-locked, coverage by section, missing functions, etc.
+//! With --spec-path: theorems/properties → contracts → parseable vs unparseable.
 
-use std::path::PathBuf;
-use std::collections::HashMap;
 use crate::cli::verify::{discover_functions, FunctionToVerify};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Coverage statistics
 #[derive(Debug, Clone)]
@@ -21,31 +22,36 @@ pub struct CoverageStats {
     pub without_contracts: usize,
 }
 
-/// Generate coverage report
-pub fn generate_coverage(workspace_root: &PathBuf) -> Result<CoverageStats, String> {
-    let functions = discover_functions(workspace_root)?;
-    
+/// Generate coverage report. When spec_paths is provided, enriches functions with spec-derived contracts first.
+pub fn generate_coverage(
+    workspace_root: &PathBuf,
+    spec_paths: Option<&[PathBuf]>,
+) -> Result<CoverageStats, String> {
+    let mut functions = discover_functions(workspace_root)?;
+
+    if let Some(paths) = spec_paths {
+        super::spec_enrich::enrich_functions_with_spec(&mut functions, paths)?;
+    }
+
     let mut by_section: HashMap<String, Vec<FunctionToVerify>> = HashMap::new();
     let mut without_section = Vec::new();
     let mut with_contracts = 0;
     let mut without_contracts = 0;
-    
+
     for func in functions {
         if func.contracts.is_empty() {
             without_contracts += 1;
         } else {
             with_contracts += 1;
         }
-        
+
         if let Some(section) = &func.section {
-            by_section.entry(section.clone())
-                .or_insert_with(Vec::new)
-                .push(func);
+            by_section.entry(section.clone()).or_default().push(func);
         } else {
             without_section.push(func);
         }
     }
-    
+
     Ok(CoverageStats {
         total_spec_locked: with_contracts + without_contracts,
         by_section,
@@ -58,54 +64,67 @@ pub fn generate_coverage(workspace_root: &PathBuf) -> Result<CoverageStats, Stri
 /// Format coverage report as human-readable text
 pub fn format_coverage_human(stats: &CoverageStats) -> String {
     let mut output = String::new();
-    
+
     output.push_str("=== Spec Lock Coverage Report ===\n\n");
-    
+
     // Overall statistics
-    output.push_str(&format!("Total spec-locked functions: {}\n", stats.total_spec_locked));
+    output.push_str(&format!(
+        "Total spec-locked functions: {}\n",
+        stats.total_spec_locked
+    ));
     output.push_str(&format!("  - With contracts: {}\n", stats.with_contracts));
-    output.push_str(&format!("  - Without contracts: {}\n", stats.without_contracts));
-    
+    output.push_str(&format!(
+        "  - Without contracts: {}\n",
+        stats.without_contracts
+    ));
+
     if stats.total_spec_locked > 0 {
-        let contract_coverage = (stats.with_contracts as f64 / stats.total_spec_locked as f64) * 100.0;
+        let contract_coverage =
+            (stats.with_contracts as f64 / stats.total_spec_locked as f64) * 100.0;
         output.push_str(&format!("Contract coverage: {:.1}%\n", contract_coverage));
     }
-    
-    output.push_str("\n");
-    
+
+    output.push('\n');
+
     // By section
     if !stats.by_section.is_empty() {
         output.push_str("Coverage by Orange Paper Section:\n");
         output.push_str("--------------------------------\n");
-        
-        let mut sections: Vec<(&String, &Vec<FunctionToVerify>)> = stats.by_section.iter().collect();
+
+        let mut sections: Vec<(&String, &Vec<FunctionToVerify>)> =
+            stats.by_section.iter().collect();
         sections.sort_by_key(|(section, _)| {
             // Sort by section number (e.g., "5.1" < "5.2" < "6.1")
             let parts: Vec<&str> = section.split('.').collect();
-            let major: u32 = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let major: u32 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
             let minor: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
             let sub: u32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
             (major, minor, sub)
         });
-        
+
         for (section, funcs) in sections {
-            output.push_str(&format!("  Section {}: {} functions\n", section, funcs.len()));
+            output.push_str(&format!(
+                "  Section {}: {} functions\n",
+                section,
+                funcs.len()
+            ));
             for func in funcs {
                 let contract_status = if func.contracts.is_empty() {
                     "⚠️  no contracts"
                 } else {
                     "✅"
                 };
-                output.push_str(&format!("    - {} {} ({})\n", 
+                output.push_str(&format!(
+                    "    - {} {} ({})\n",
                     contract_status,
                     func.function_name,
                     func.file_path.display()
                 ));
             }
         }
-        output.push_str("\n");
+        output.push('\n');
     }
-    
+
     // Functions without section (auto-inferred)
     if !stats.without_section.is_empty() {
         output.push_str("Functions with auto-inferred sections:\n");
@@ -116,34 +135,43 @@ pub fn format_coverage_human(stats: &CoverageStats) -> String {
             } else {
                 "✅"
             };
-            output.push_str(&format!("  {} {} ({})\n", 
+            output.push_str(&format!(
+                "  {} {} ({})\n",
                 contract_status,
                 func.function_name,
                 func.file_path.display()
             ));
         }
-        output.push_str("\n");
+        output.push('\n');
     }
-    
+
     // Summary
     output.push_str("Summary:\n");
     output.push_str("--------\n");
-    output.push_str(&format!("  Total sections covered: {}\n", stats.by_section.len()));
-    output.push_str(&format!("  Functions with contracts: {}\n", stats.with_contracts));
-    output.push_str(&format!("  Functions without contracts: {}\n", stats.without_contracts));
-    
+    output.push_str(&format!(
+        "  Total sections covered: {}\n",
+        stats.by_section.len()
+    ));
+    output.push_str(&format!(
+        "  Functions with contracts: {}\n",
+        stats.with_contracts
+    ));
+    output.push_str(&format!(
+        "  Functions without contracts: {}\n",
+        stats.without_contracts
+    ));
+
     if stats.total_spec_locked > 0 {
-        let contract_coverage = (stats.with_contracts as f64 / stats.total_spec_locked as f64) * 100.0;
+        let contract_coverage =
+            (stats.with_contracts as f64 / stats.total_spec_locked as f64) * 100.0;
         output.push_str(&format!("  Contract coverage: {:.1}%\n", contract_coverage));
     }
-    
+
     output
 }
 
 /// Format coverage report as JSON
 pub fn format_coverage_json(stats: &CoverageStats) -> String {
-    use std::collections::HashMap;
-    
     let mut json = serde_json::json!({
         "total_spec_locked": stats.total_spec_locked,
         "with_contracts": stats.with_contracts,
@@ -156,21 +184,24 @@ pub fn format_coverage_json(stats: &CoverageStats) -> String {
         "by_section": {},
         "without_section": []
     });
-    
+
     // Add by_section
     let by_section_obj = json["by_section"].as_object_mut().unwrap();
     for (section, funcs) in &stats.by_section {
-        by_section_obj.insert(section.clone(), serde_json::json!({
-            "count": funcs.len(),
-            "functions": funcs.iter().map(|f| serde_json::json!({
-                "name": f.function_name,
-                "file": f.file_path.display().to_string(),
-                "has_contracts": !f.contracts.is_empty(),
-                "contract_count": f.contracts.len()
-            })).collect::<Vec<_>>()
-        }));
+        by_section_obj.insert(
+            section.clone(),
+            serde_json::json!({
+                "count": funcs.len(),
+                "functions": funcs.iter().map(|f| serde_json::json!({
+                    "name": f.function_name,
+                    "file": f.file_path.display().to_string(),
+                    "has_contracts": !f.contracts.is_empty(),
+                    "contract_count": f.contracts.len()
+                })).collect::<Vec<_>>()
+            }),
+        );
     }
-    
+
     // Add without_section
     let without_section_arr = json["without_section"].as_array_mut().unwrap();
     for func in &stats.without_section {
@@ -181,44 +212,55 @@ pub fn format_coverage_json(stats: &CoverageStats) -> String {
             "contract_count": func.contracts.len()
         }));
     }
-    
+
     serde_json::to_string_pretty(&json).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// Format coverage report as Markdown
 pub fn format_coverage_markdown(stats: &CoverageStats) -> String {
     let mut output = String::new();
-    
+
     output.push_str("# Spec Lock Coverage Report\n\n");
-    
+
     // Overall statistics
     output.push_str("## Overall Statistics\n\n");
-    output.push_str(&format!("- **Total spec-locked functions**: {}\n", stats.total_spec_locked));
+    output.push_str(&format!(
+        "- **Total spec-locked functions**: {}\n",
+        stats.total_spec_locked
+    ));
     output.push_str(&format!("- **With contracts**: {}\n", stats.with_contracts));
-    output.push_str(&format!("- **Without contracts**: {}\n", stats.without_contracts));
-    
+    output.push_str(&format!(
+        "- **Without contracts**: {}\n",
+        stats.without_contracts
+    ));
+
     if stats.total_spec_locked > 0 {
-        let contract_coverage = (stats.with_contracts as f64 / stats.total_spec_locked as f64) * 100.0;
-        output.push_str(&format!("- **Contract coverage**: {:.1}%\n", contract_coverage));
+        let contract_coverage =
+            (stats.with_contracts as f64 / stats.total_spec_locked as f64) * 100.0;
+        output.push_str(&format!(
+            "- **Contract coverage**: {:.1}%\n",
+            contract_coverage
+        ));
     }
-    
-    output.push_str("\n");
-    
+
+    output.push('\n');
+
     // By section
     if !stats.by_section.is_empty() {
         output.push_str("## Coverage by Orange Paper Section\n\n");
         output.push_str("| Section | Functions | Status |\n");
         output.push_str("|---------|-----------|--------|\n");
-        
-        let mut sections: Vec<(&String, &Vec<FunctionToVerify>)> = stats.by_section.iter().collect();
+
+        let mut sections: Vec<(&String, &Vec<FunctionToVerify>)> =
+            stats.by_section.iter().collect();
         sections.sort_by_key(|(section, _)| {
             let parts: Vec<&str> = section.split('.').collect();
-            let major: u32 = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let major: u32 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
             let minor: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
             let sub: u32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
             (major, minor, sub)
         });
-        
+
         for (section, funcs) in sections {
             let with_contracts = funcs.iter().filter(|f| !f.contracts.is_empty()).count();
             let status = if with_contracts == funcs.len() {
@@ -230,12 +272,193 @@ pub fn format_coverage_markdown(stats: &CoverageStats) -> String {
             };
             output.push_str(&format!("| {} | {} | {} |\n", section, funcs.len(), status));
         }
-        output.push_str("\n");
+        output.push('\n');
     }
-    
+
     output
 }
 
+/// Spec coverage: theorems/properties → contracts → parseable
+#[derive(Debug, Clone)]
+pub struct SpecCoverageReport {
+    pub total_spec_functions: usize,
+    pub total_contracts: usize,
+    pub parseable_contracts: usize,
+    pub unparseable_contracts: usize,
+    pub impl_functions_with_contracts: usize,
+    pub impl_functions_without_contracts: usize,
+    pub by_section: Vec<SpecSectionCoverage>,
+}
 
+#[derive(Debug, Clone)]
+pub struct SpecSectionCoverage {
+    pub section_id: String,
+    pub spec_functions: usize,
+    pub contracts_total: usize,
+    pub contracts_parseable: usize,
+    pub impl_functions: usize,
+    pub unparseable_examples: Vec<String>,
+}
 
+/// Generate spec coverage report (theorems → contracts → parseable)
+pub fn generate_spec_coverage_report(
+    _crate_path: &PathBuf,
+    spec_paths: &[PathBuf],
+    stats: &CoverageStats,
+) -> Result<SpecCoverageReport, String> {
+    use crate::parser::condition;
+    use crate::parser::orange_paper::SpecParser;
 
+    let parser = SpecParser::from_paths(spec_paths)?;
+
+    let mut total_contracts = 0usize;
+    let mut parseable_contracts = 0usize;
+    let mut by_section = Vec::new();
+
+    for (section_id, section) in parser.iter_sections() {
+        let mut contracts_total = 0usize;
+        let mut contracts_parseable = 0usize;
+        let mut unparseable_examples = Vec::new();
+
+        for func in &section.functions {
+            for contract in &func.contracts {
+                contracts_total += 1;
+                total_contracts += 1;
+                let cond = &contract.condition;
+                if condition::extract_parseable_condition(cond).is_some() {
+                    contracts_parseable += 1;
+                    parseable_contracts += 1;
+                } else if unparseable_examples.len() < 3 {
+                    let short = if cond.len() > 60 {
+                        format!("{}...", &cond[..57])
+                    } else {
+                        cond.clone()
+                    };
+                    unparseable_examples.push(short);
+                }
+            }
+        }
+
+        let impl_functions = stats
+            .by_section
+            .get(section_id)
+            .map(|v| v.len())
+            .unwrap_or(0);
+
+        by_section.push(SpecSectionCoverage {
+            section_id: section_id.clone(),
+            spec_functions: section.functions.len(),
+            contracts_total,
+            contracts_parseable,
+            impl_functions,
+            unparseable_examples,
+        });
+    }
+
+    by_section.sort_by_key(|s| {
+        let parts: Vec<&str> = s.section_id.split('.').collect();
+        let major: u32 = parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
+        let minor: u32 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
+        let sub: u32 = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);
+        (major, minor, sub)
+    });
+
+    let total_spec_functions = by_section.iter().map(|s| s.spec_functions).sum();
+    let unparseable_contracts = total_contracts - parseable_contracts;
+
+    Ok(SpecCoverageReport {
+        total_spec_functions,
+        total_contracts,
+        parseable_contracts,
+        unparseable_contracts,
+        impl_functions_with_contracts: stats.with_contracts,
+        impl_functions_without_contracts: stats.without_contracts,
+        by_section,
+    })
+}
+
+pub fn format_spec_coverage_human(report: &SpecCoverageReport) -> String {
+    let mut output = String::new();
+    output.push_str("=== Spec Coverage Report (Theorems → Contracts → Parseable) ===\n\n");
+    output.push_str(&format!("Spec functions: {}\n", report.total_spec_functions));
+    output.push_str(&format!("Total contracts: {}\n", report.total_contracts));
+    let pct = if report.total_contracts > 0 {
+        100.0 * report.parseable_contracts as f64 / report.total_contracts as f64
+    } else {
+        0.0
+    };
+    output.push_str(&format!("  Parseable: {} ({:.1}%)\n", report.parseable_contracts, pct));
+    output.push_str(&format!("  Unparseable: {}\n", report.unparseable_contracts));
+    output.push_str(&format!("\nImpl functions with contracts: {}\n", report.impl_functions_with_contracts));
+    output.push_str(&format!("Impl functions without contracts: {}\n\n", report.impl_functions_without_contracts));
+    output.push_str("By section:\n");
+    output.push_str("Section | Spec Funcs | Contracts | Parseable | Impl\n");
+    output.push_str("--------|------------|-----------|-----------|-----\n");
+    for s in &report.by_section {
+        let spct = if s.contracts_total > 0 {
+            100.0 * s.contracts_parseable as f64 / s.contracts_total as f64
+        } else {
+            0.0
+        };
+        output.push_str(&format!(
+            "{} | {} | {} | {} ({:.0}%) | {}\n",
+            s.section_id, s.spec_functions, s.contracts_total, s.contracts_parseable, spct, s.impl_functions
+        ));
+        if !s.unparseable_examples.is_empty() {
+            for ex in &s.unparseable_examples {
+                output.push_str(&format!("  Unparseable: {}\n", ex));
+            }
+        }
+    }
+    output
+}
+
+pub fn format_spec_coverage_json(report: &SpecCoverageReport) -> String {
+    serde_json::json!({
+        "total_spec_functions": report.total_spec_functions,
+        "total_contracts": report.total_contracts,
+        "parseable_contracts": report.parseable_contracts,
+        "unparseable_contracts": report.unparseable_contracts,
+        "parseable_percent": if report.total_contracts > 0 { 100.0 * report.parseable_contracts as f64 / report.total_contracts as f64 } else { 0.0 },
+        "impl_with_contracts": report.impl_functions_with_contracts,
+        "impl_without_contracts": report.impl_functions_without_contracts,
+        "by_section": report.by_section.iter().map(|s| serde_json::json!({
+            "section": s.section_id,
+            "spec_functions": s.spec_functions,
+            "contracts_total": s.contracts_total,
+            "contracts_parseable": s.contracts_parseable,
+            "impl_functions": s.impl_functions,
+            "unparseable_examples": s.unparseable_examples,
+        })).collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
+pub fn format_spec_coverage_markdown(report: &SpecCoverageReport) -> String {
+    let mut output = String::new();
+    output.push_str("# Spec Coverage Report\n\n");
+    output.push_str("| Metric | Count |\n|--------|-------|\n");
+    output.push_str(&format!("| Spec functions | {} |\n", report.total_spec_functions));
+    output.push_str(&format!("| Total contracts | {} |\n", report.total_contracts));
+    output.push_str(&format!("| Parseable | {} |\n", report.parseable_contracts));
+    output.push_str(&format!("| Unparseable | {} |\n", report.unparseable_contracts));
+    let pct = if report.total_contracts > 0 {
+        100.0 * report.parseable_contracts as f64 / report.total_contracts as f64
+    } else {
+        0.0
+    };
+    output.push_str(&format!("| Parseable % | {:.1} |\n\n", pct));
+    output.push_str("## By Section\n\n| Section | Spec | Contracts | Parseable | Impl |\n|---------|------|-----------|-----------|------|\n");
+    for s in &report.by_section {
+        let spct = if s.contracts_total > 0 {
+            100.0 * s.contracts_parseable as f64 / s.contracts_total as f64
+        } else {
+            0.0
+        };
+        output.push_str(&format!(
+            "| {} | {} | {} | {} ({:.0}%) | {} |\n",
+            s.section_id, s.spec_functions, s.contracts_total, s.contracts_parseable, spct, s.impl_functions
+        ));
+    }
+    output
+}

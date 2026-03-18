@@ -40,19 +40,19 @@ pub fn extract_contracts(func: &ItemFn) -> Vec<Contract> {
 /// Parse a single attribute to see if it's a contract
 fn parse_contract_attribute(attr: &Attribute) -> Option<Contract> {
     let path = attr.path();
-    
+
     // Check if it's #[requires(...)] or #[ensures(...)]
     // Handle both bare attributes and crate-prefixed: #[blvm_spec_lock::requires]
-    let is_requires = path.is_ident("requires") || 
-        (path.segments.len() == 2 && 
-         path.segments[0].ident == "blvm_spec_lock" && 
-         path.segments[1].ident == "requires");
-    
-    let is_ensures = path.is_ident("ensures") || 
-        (path.segments.len() == 2 && 
-         path.segments[0].ident == "blvm_spec_lock" && 
-         path.segments[1].ident == "ensures");
-    
+    let is_requires = path.is_ident("requires")
+        || (path.segments.len() == 2
+            && path.segments[0].ident == "blvm_spec_lock"
+            && path.segments[1].ident == "requires");
+
+    let is_ensures = path.is_ident("ensures")
+        || (path.segments.len() == 2
+            && path.segments[0].ident == "blvm_spec_lock"
+            && path.segments[1].ident == "ensures");
+
     if is_requires {
         // Parse the condition from the attribute
         if let Ok(expr) = attr.parse_args::<Expr>() {
@@ -80,4 +80,3 @@ fn extract_comment(_attr: &Attribute) -> Option<String> {
     // Comments in contracts are handled by the verification tool when it processes the contracts
     None
 }
-

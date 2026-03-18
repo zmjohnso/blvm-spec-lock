@@ -20,14 +20,14 @@ pub fn filter_functions(
                     return false;
                 }
             }
-            
+
             // Filter by name (if specified)
             if let Some(name_pattern) = name {
                 if !matches_name(&f.function_name, name_pattern) {
                     return false;
                 }
             }
-            
+
             // Filter by section (if specified)
             if !sections.is_empty() {
                 if let Some(ref section) = f.section {
@@ -38,7 +38,7 @@ pub fn filter_functions(
                     return false; // No section specified, exclude
                 }
             }
-            
+
             true
         })
         .collect()
@@ -55,11 +55,10 @@ fn matches_subsystem(file_path: &std::path::Path, subsystem: &str) -> bool {
 fn matches_name(function_name: &str, pattern: &str) -> bool {
     // Simple pattern matching (support * wildcard)
     if pattern.contains('*') {
-        let regex_pattern = pattern.replace('*', ".*");
+        let _regex_pattern = pattern.replace('*', ".*");
         // For now, simple contains check
         function_name.contains(&pattern.replace('*', ""))
     } else {
         function_name == pattern
     }
 }
-

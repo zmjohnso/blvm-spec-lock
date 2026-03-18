@@ -10,14 +10,14 @@
 //! ## Usage
 //!
 //! ```rust
-//! use blvm_spec_lock::spec_locked;
+//! use blvm_spec_lock::{spec_locked, requires, ensures};
 //!
 //! /// GetBlockSubsidy: ℕ → ℤ
 //! #[spec_locked("6.1")]
 //! #[requires(height >= 0)]
 //! #[ensures(result >= 0)]
 //! pub fn get_block_subsidy(height: u64) -> i64 {
-//!     // Implementation...
+//!     0
 //! }
 //! ```
 //!
@@ -26,11 +26,13 @@
 //! 2. Parses the specified section
 //! 3. Links function to spec (contracts come from manual annotations or Orange Paper)
 
-mod parser;
-mod cache;
+// Parser/translator types are used by the binary (cargo-spec-lock); lib is proc-macro only.
+#![allow(dead_code)]
+
 mod macro_impl;
-mod translator;
+mod parser;
 mod report;
+mod translator;
 // CLI module is only used by the binary, not the library
 
 // Note: Proc-macro crates cannot export regular items.
@@ -56,25 +58,31 @@ use proc_macro::TokenStream;
 ///
 /// Simple positional syntax (recommended):
 /// ```rust
+/// use blvm_spec_lock::spec_locked;
+///
 /// #[spec_locked("6.1", "GetBlockSubsidy")]
 /// pub fn get_block_subsidy(height: u64) -> i64 {
-///     // Implementation...
+///     0
 /// }
 /// ```
 ///
 /// Combined format:
 /// ```rust
+/// use blvm_spec_lock::spec_locked;
+///
 /// #[spec_locked("6.1::GetBlockSubsidy")]
 /// pub fn get_block_subsidy(height: u64) -> i64 {
-///     // Implementation...
+///     0
 /// }
 /// ```
 ///
 /// Named parameters (also supported):
 /// ```rust
+/// use blvm_spec_lock::spec_locked;
+///
 /// #[spec_locked(section = "6.1", function = "GetBlockSubsidy")]
 /// pub fn get_block_subsidy(height: u64) -> i64 {
-///     // Implementation...
+///     0
 /// }
 /// ```
 ///

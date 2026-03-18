@@ -2,6 +2,8 @@
 
 Purpose-built formal verification tool for Bitcoin Commons.
 
+**Locking mechanism**: See [docs/LOCKING_MECHANISM.md](docs/LOCKING_MECHANISM.md) for the full lifecycle (discover → enrich → verify), attribute syntax, and status semantics. **Spec wording**: See [SPEC_WORDING.md](SPEC_WORDING.md) for parseable condition patterns. **How to annotate**: See [docs/ANNOTATION_GUIDE.md](docs/ANNOTATION_GUIDE.md) for adding `#[spec_locked]` to new functions.
+
 ## Overview
 
 BLVM Spec Lock provides formal verification for Bitcoin consensus code by:
@@ -31,6 +33,12 @@ ln -s target/release/cargo-spec-lock ~/.cargo/bin/cargo-spec-lock
 # Verify all functions with #[spec_locked]
 cargo spec-lock verify
 
+# With Orange Paper: derive contracts from spec (required for 0 no-contracts)
+cargo spec-lock verify --spec-path path/to/THE_ORANGE_PAPER.md
+
+# Strict mode: fail on partial or no-contracts (for CI gates)
+cargo spec-lock verify --strict
+
 # Verify specific file
 cargo spec-lock verify src/economic.rs
 
@@ -42,6 +50,10 @@ cargo spec-lock verify --name get_block_subsidy
 
 # Verify by Orange Paper section
 cargo spec-lock verify --section 6.1
+
+# Lock status summary (no verification)
+cargo spec-lock summary --crate-path .
+cargo spec-lock summary --crate-path . --spec-path path/to/THE_ORANGE_PAPER.md
 ```
 
 ### Output Formats
@@ -71,9 +83,43 @@ pub fn get_block_subsidy(height: u64) -> i64 {
 }
 ```
 
+### Related Projects (blvm-spec-lock sibling to blvm-consensus, blvm-spec)
+
+From `blvm-spec-lock` directory:
+
+```bash
+# Verify blvm-consensus (140 functions)
+cargo run --bin cargo-spec-lock -- verify \
+  --spec-path ../blvm-spec/THE_ORANGE_PAPER.md \
+  --crate-path ../blvm-consensus
+
+# Verify blvm-node (Dandelion 10.6)
+cargo run --bin cargo-spec-lock -- verify \
+  --spec-path ../blvm-spec/THE_ORANGE_PAPER.md \
+  --crate-path ../blvm-node
+```
+
+With Z3: add `--features z3` to the `cargo run` command.
+
+## Validation
+
+- **Negative test**: `cargo test wrong_implementation_fails` — wrong impl must fail verification.
+- **Spec coverage**: `cargo spec-lock coverage --spec-path ...` — theorems → contracts → parseable %.
+- **Drift**: `cargo spec-lock check-drift --spec-path ...` — unparseable contracts, missing impls.
+
+## Spec Wording
+
+Orange Paper conditions must be parseable for verification. See **[SPEC_WORDING.md](SPEC_WORDING.md)** for:
+- Supported patterns (`\in {true, false}`, `extracts lower N bits`, etc.)
+- LaTeX → Rust translation (`\land` → `&`, `≥` → `>=`)
+- What to avoid (activation heights in conditions, mixed prose)
+
+To add `#[spec_locked]` to new functions, see **[docs/ANNOTATION_GUIDE.md](docs/ANNOTATION_GUIDE.md)**.
+
 ## Features
 
 - **Function Discovery**: Automatically finds all `#[spec_locked]` functions
+- **Spec-derived Contracts**: Orange Paper parser + lexer extract parseable conditions (LaTeX, `\text{}`, `\geq`, etc.)
 - **Contract Parsing**: Extracts `#[requires]` and `#[ensures]` attributes
 - **Static Checking**: Fast Rust-based checks for simple properties
 - **Z3 Verification**: Full SMT solving for complex properties (requires `--features z3`)
