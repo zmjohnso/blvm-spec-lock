@@ -156,12 +156,6 @@ jobs:
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Regenerate Cargo.lock (dependencies)
-        if: steps.gate.outputs.do_release == 'true'
-        run: |
-          rm -f Cargo.lock
-          cargo update
-
       - name: Update version in Cargo.toml
         if: steps.gate.outputs.do_release == 'true'
         run: |
@@ -176,12 +170,6 @@ jobs:
             { print }
           ' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
           echo "Updated Cargo.toml to version ${VERSION}"
-
-      - name: Regenerate Cargo.lock after version bump
-        if: steps.gate.outputs.do_release == 'true'
-        run: |
-          rm -f Cargo.lock
-          cargo update
 
       - name: Pre-release smoke test
         if: steps.gate.outputs.do_release == 'true'
