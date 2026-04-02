@@ -16,7 +16,9 @@
 
 use crate::parser::contracts::{Contract, ContractType};
 #[cfg(feature = "z3")]
-use crate::translator::z3_translator::{returns_bool_like, returns_result_or_option_result, Z3Translator, Z3VarMap};
+use crate::translator::z3_translator::{
+    returns_bool_like, returns_result_or_option_result, Z3Translator, Z3VarMap,
+};
 #[cfg(feature = "z3")]
 use z3::ast::{forall_const, Ast, Bool, Int};
 #[cfg(feature = "z3")]
@@ -201,7 +203,8 @@ impl Z3Verifier {
                 VerificationResult::Failed { counterexample }
             }
             SatResult::Unknown => VerificationResult::Unknown {
-                reason: "Z3 solver returned Unknown (timeout or complexity). Try --timeout 30.".to_string(),
+                reason: "Z3 solver returned Unknown (timeout or complexity). Try --timeout 30."
+                    .to_string(),
             },
         }
     }
@@ -259,7 +262,9 @@ impl Z3Verifier {
         // Result<T> / Option<Result<T>>: use Int for determinism (0=Err/None, 1=Ok(false), 2=Ok(true))
         // Only for functions that need it (script verification) - avoids breaking others
         let func_name = func.sig.ident.to_string();
-        let use_int_result = return_type.as_ref().map_or(false, returns_result_or_option_result)
+        let use_int_result = return_type
+            .as_ref()
+            .map_or(false, returns_result_or_option_result)
             && matches!(
                 func_name.as_str(),
                 "verify_script_with_context_full"
@@ -285,33 +290,47 @@ impl Z3Verifier {
 
         let formula1 = match self.translator.translate_function_body(func, &mut vars1) {
             Ok(Some(f)) => f,
-            Ok(None) => return VerificationResult::Error {
-                error: "Could not translate body for run 1 (no formula)".to_string(),
-            },
-            Err(e) => return VerificationResult::Error {
-                error: format!("Could not translate body for run 1: {}", e),
-            },
+            Ok(None) => {
+                return VerificationResult::Error {
+                    error: "Could not translate body for run 1 (no formula)".to_string(),
+                }
+            }
+            Err(e) => {
+                return VerificationResult::Error {
+                    error: format!("Could not translate body for run 1: {}", e),
+                }
+            }
         };
         let formula2 = match self.translator.translate_function_body(func, &mut vars2) {
             Ok(Some(f)) => f,
-            Ok(None) => return VerificationResult::Error {
-                error: "Could not translate body for run 2 (no formula)".to_string(),
-            },
-            Err(e) => return VerificationResult::Error {
-                error: format!("Could not translate body for run 2: {}", e),
-            },
+            Ok(None) => {
+                return VerificationResult::Error {
+                    error: "Could not translate body for run 2 (no formula)".to_string(),
+                }
+            }
+            Err(e) => {
+                return VerificationResult::Error {
+                    error: format!("Could not translate body for run 2: {}", e),
+                }
+            }
         };
 
         solver.assert(&formula1);
         solver.assert(&formula2);
 
         for req in requires_contracts {
-            if let Ok(expr1) = self.translator.translate_expr_with_vars(&req.condition, &mut vars1) {
+            if let Ok(expr1) = self
+                .translator
+                .translate_expr_with_vars(&req.condition, &mut vars1)
+            {
                 if let Some(b1) = expr1.as_bool() {
                     solver.assert(&b1);
                 }
             }
-            if let Ok(expr2) = self.translator.translate_expr_with_vars(&req.condition, &mut vars2) {
+            if let Ok(expr2) = self
+                .translator
+                .translate_expr_with_vars(&req.condition, &mut vars2)
+            {
                 if let Some(b2) = expr2.as_bool() {
                     solver.assert(&b2);
                 }

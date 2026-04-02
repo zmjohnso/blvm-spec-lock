@@ -269,7 +269,11 @@ fn main() {
             crate_path,
             spec_path,
             format,
-        } => handle_summary(resolve_crate_path(crate_path), resolve_spec_paths(spec_path), format),
+        } => handle_summary(
+            resolve_crate_path(crate_path),
+            resolve_spec_paths(spec_path),
+            format,
+        ),
         Commands::CheckDrift {
             spec_path,
             crate_path,
@@ -296,11 +300,7 @@ fn main() {
     std::process::exit(exit_code);
 }
 
-fn handle_check_drift(
-    spec_paths: Vec<PathBuf>,
-    crate_path: PathBuf,
-    format: OutputFormat,
-) -> i32 {
+fn handle_check_drift(spec_paths: Vec<PathBuf>, crate_path: PathBuf, format: OutputFormat) -> i32 {
     if spec_paths.is_empty() {
         eprintln!("Error: --spec-path or SPEC_LOCK_SPEC_PATH required for check-drift");
         return 1;
@@ -341,11 +341,7 @@ fn handle_check_drift(
     }
 }
 
-fn handle_coverage(
-    crate_path: PathBuf,
-    spec_paths: Vec<PathBuf>,
-    format: OutputFormat,
-) -> i32 {
+fn handle_coverage(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: OutputFormat) -> i32 {
     let stats = match cli::coverage::generate_coverage(
         &crate_path,
         if spec_paths.is_empty() {
@@ -443,7 +439,9 @@ fn handle_summary(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: String)
 
     if all_functions.is_empty() {
         if format == "badge" {
-            println!("[![spec-lock](https://img.shields.io/badge/spec--lock-0%20locked-lightgrey)](#)");
+            println!(
+                "[![spec-lock](https://img.shields.io/badge/spec--lock-0%20locked-lightgrey)](#)"
+            );
         } else {
             eprintln!("No spec-locked functions found in {}", crate_path.display());
         }
@@ -487,7 +485,10 @@ fn handle_summary(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: String)
     println!("  Functions: {}", functions.len());
     println!("  Sections: {}", sections.len());
     if !spec_paths.is_empty() {
-        println!("  Enriched with spec: {} (contracts from Orange Paper)", enriched_count);
+        println!(
+            "  Enriched with spec: {} (contracts from Orange Paper)",
+            enriched_count
+        );
     } else {
         println!("  Enriched: (use --spec-path for spec-derived contracts)");
     }
@@ -520,23 +521,29 @@ fn handle_verify(
         }
     };
 
-        // Spec is single source of truth: --spec-path required for contract derivation
-        if !spec_paths.is_empty() {
-            match cli::spec_enrich::enrich_functions_with_spec(&mut all_functions, &spec_paths) {
-                Ok(enriched) => {
-                    if enriched > 0 {
-                        eprintln!("📋 Enriched {} functions with spec-derived contracts", enriched);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Warning: Could not parse spec for contract extraction: {}", e);
-                    eprintln!("  Continuing with manual contracts only");
+    // Spec is single source of truth: --spec-path required for contract derivation
+    if !spec_paths.is_empty() {
+        match cli::spec_enrich::enrich_functions_with_spec(&mut all_functions, &spec_paths) {
+            Ok(enriched) => {
+                if enriched > 0 {
+                    eprintln!(
+                        "📋 Enriched {} functions with spec-derived contracts",
+                        enriched
+                    );
                 }
             }
-        } else {
-            eprintln!("Note: --spec-path not set. Use --spec-path <ORANGE_PAPER.md> for spec-derived contracts.");
-            eprintln!("  Without it, only manual #[requires]/#[ensures] are used.");
+            Err(e) => {
+                eprintln!(
+                    "Warning: Could not parse spec for contract extraction: {}",
+                    e
+                );
+                eprintln!("  Continuing with manual contracts only");
+            }
         }
+    } else {
+        eprintln!("Note: --spec-path not set. Use --spec-path <ORANGE_PAPER.md> for spec-derived contracts.");
+        eprintln!("  Without it, only manual #[requires]/#[ensures] are used.");
+    }
 
     // Apply filters
     let filtered = cli::filters::filter_functions(
@@ -945,9 +952,7 @@ fn handle_extract_property_tests(
     output_path: Option<PathBuf>,
 ) -> i32 {
     if spec_paths.is_empty() {
-        eprintln!(
-            "Error: --spec-path or SPEC_LOCK_SPEC_PATH required for extract-property-tests"
-        );
+        eprintln!("Error: --spec-path or SPEC_LOCK_SPEC_PATH required for extract-property-tests");
         return 1;
     }
 

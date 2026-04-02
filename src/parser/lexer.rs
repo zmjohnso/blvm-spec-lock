@@ -8,7 +8,7 @@
 pub enum Token {
     Ident(String),
     Number(String),
-    Op(String),      // >=, <=, ==, !=, >, <, =>, &&, ||
+    Op(String), // >=, <=, ==, !=, >, <, =>, &&, ||
     Lparen,
     Rparen,
     Comma,
@@ -273,7 +273,9 @@ fn spec_ident_to_rust(s: &str) -> String {
     match s {
         "result" | "true" | "false" => s.to_string(),
         _ => {
-            let s = s.replace("script'", "script_out").replace("pattern'", "pattern_out");
+            let s = s
+                .replace("script'", "script_out")
+                .replace("pattern'", "pattern_out");
             if s.contains('(') {
                 s.split('(').next().unwrap_or(&s).to_string()
             } else {

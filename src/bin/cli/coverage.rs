@@ -380,17 +380,32 @@ pub fn generate_spec_coverage_report(
 pub fn format_spec_coverage_human(report: &SpecCoverageReport) -> String {
     let mut output = String::new();
     output.push_str("=== Spec Coverage Report (Theorems → Contracts → Parseable) ===\n\n");
-    output.push_str(&format!("Spec functions: {}\n", report.total_spec_functions));
+    output.push_str(&format!(
+        "Spec functions: {}\n",
+        report.total_spec_functions
+    ));
     output.push_str(&format!("Total contracts: {}\n", report.total_contracts));
     let pct = if report.total_contracts > 0 {
         100.0 * report.parseable_contracts as f64 / report.total_contracts as f64
     } else {
         0.0
     };
-    output.push_str(&format!("  Parseable: {} ({:.1}%)\n", report.parseable_contracts, pct));
-    output.push_str(&format!("  Unparseable: {}\n", report.unparseable_contracts));
-    output.push_str(&format!("\nImpl functions with contracts: {}\n", report.impl_functions_with_contracts));
-    output.push_str(&format!("Impl functions without contracts: {}\n\n", report.impl_functions_without_contracts));
+    output.push_str(&format!(
+        "  Parseable: {} ({:.1}%)\n",
+        report.parseable_contracts, pct
+    ));
+    output.push_str(&format!(
+        "  Unparseable: {}\n",
+        report.unparseable_contracts
+    ));
+    output.push_str(&format!(
+        "\nImpl functions with contracts: {}\n",
+        report.impl_functions_with_contracts
+    ));
+    output.push_str(&format!(
+        "Impl functions without contracts: {}\n\n",
+        report.impl_functions_without_contracts
+    ));
     output.push_str("By section:\n");
     output.push_str("Section | Spec Funcs | Contracts | Parseable | Impl\n");
     output.push_str("--------|------------|-----------|-----------|-----\n");
@@ -402,7 +417,12 @@ pub fn format_spec_coverage_human(report: &SpecCoverageReport) -> String {
         };
         output.push_str(&format!(
             "{} | {} | {} | {} ({:.0}%) | {}\n",
-            s.section_id, s.spec_functions, s.contracts_total, s.contracts_parseable, spct, s.impl_functions
+            s.section_id,
+            s.spec_functions,
+            s.contracts_total,
+            s.contracts_parseable,
+            spct,
+            s.impl_functions
         ));
         if !s.unparseable_examples.is_empty() {
             for ex in &s.unparseable_examples {
@@ -438,10 +458,19 @@ pub fn format_spec_coverage_markdown(report: &SpecCoverageReport) -> String {
     let mut output = String::new();
     output.push_str("# Spec Coverage Report\n\n");
     output.push_str("| Metric | Count |\n|--------|-------|\n");
-    output.push_str(&format!("| Spec functions | {} |\n", report.total_spec_functions));
-    output.push_str(&format!("| Total contracts | {} |\n", report.total_contracts));
+    output.push_str(&format!(
+        "| Spec functions | {} |\n",
+        report.total_spec_functions
+    ));
+    output.push_str(&format!(
+        "| Total contracts | {} |\n",
+        report.total_contracts
+    ));
     output.push_str(&format!("| Parseable | {} |\n", report.parseable_contracts));
-    output.push_str(&format!("| Unparseable | {} |\n", report.unparseable_contracts));
+    output.push_str(&format!(
+        "| Unparseable | {} |\n",
+        report.unparseable_contracts
+    ));
     let pct = if report.total_contracts > 0 {
         100.0 * report.parseable_contracts as f64 / report.total_contracts as f64
     } else {
@@ -457,7 +486,12 @@ pub fn format_spec_coverage_markdown(report: &SpecCoverageReport) -> String {
         };
         output.push_str(&format!(
             "| {} | {} | {} | {} ({:.0}%) | {} |\n",
-            s.section_id, s.spec_functions, s.contracts_total, s.contracts_parseable, spct, s.impl_functions
+            s.section_id,
+            s.spec_functions,
+            s.contracts_total,
+            s.contracts_parseable,
+            spct,
+            s.impl_functions
         ));
     }
     output

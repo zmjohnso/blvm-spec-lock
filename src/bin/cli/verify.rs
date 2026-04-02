@@ -369,7 +369,8 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                     {
                         failed_contracts.push((
                             format!("{:?}", contract.contract_type),
-                            "Z3 required but not built. Build blvm-spec-lock with --features z3.".to_string(),
+                            "Z3 required but not built. Build blvm-spec-lock with --features z3."
+                                .to_string(),
                         ));
                     }
                 }
@@ -478,7 +479,8 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                     {
                         failed_contracts.push((
                             format!("{:?}", contract.contract_type),
-                            "Z3 required but not built. Build blvm-spec-lock with --features z3.".to_string(),
+                            "Z3 required but not built. Build blvm-spec-lock with --features z3."
+                                .to_string(),
                         ));
                     }
                 }
@@ -592,7 +594,9 @@ fn verify_determinism(
     requires_contracts: &[&Contract],
     timeout_secs: u64,
 ) -> Result<(), String> {
-    use crate::parser::contracts::{Contract as LibraryContract, ContractType as LibraryContractType};
+    use crate::parser::contracts::{
+        Contract as LibraryContract, ContractType as LibraryContractType,
+    };
     use crate::translator::z3_verifier::{VerificationResult, Z3Verifier};
 
     let timeout_ms = if timeout_secs > 0 {
@@ -707,13 +711,18 @@ fn verify_with_z3(
 #[derive(Debug, Clone)]
 pub enum VerificationResult {
     Passed,
-    Failed { contract: String, reason: String },
+    Failed {
+        contract: String,
+        reason: String,
+    },
     Partial {
         verified: usize,
         total: usize,
         reason: Option<String>,
     },
     /// No contracts from spec or code - cannot verify (add to Orange Paper or #[requires]/#[ensures])
-    NoContracts { section: String },
+    NoContracts {
+        section: String,
+    },
     NotImplemented,
 }

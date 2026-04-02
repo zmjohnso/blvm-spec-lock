@@ -36,7 +36,11 @@ fn format_human(results: &[(FunctionToVerify, VerificationResult)]) -> String {
                 output.push_str(&format!("    Contract: {}\n", contract));
                 output.push_str(&format!("    Reason: {}\n", reason));
             }
-            VerificationResult::Partial { verified, total, reason } => {
+            VerificationResult::Partial {
+                verified,
+                total,
+                reason,
+            } => {
                 output.push_str(&format!(
                     "  ⚠️  Status: PARTIAL ({} of {} verified)\n",
                     verified, total
@@ -78,7 +82,11 @@ fn format_human(results: &[(FunctionToVerify, VerificationResult)]) -> String {
 
     output.push_str(&format!(
         "test result: {}. {} passed; {} failed; {} partial; 0 skipped\n",
-        if failed > 0 || no_contracts > 0 { "FAILED" } else { "ok" },
+        if failed > 0 || no_contracts > 0 {
+            "FAILED"
+        } else {
+            "ok"
+        },
         passed,
         failed + no_contracts,
         partial
@@ -127,7 +135,11 @@ fn format_json(results: &[(FunctionToVerify, VerificationResult)]) -> String {
                 result_obj["contract"] = json!(contract);
                 result_obj["reason"] = json!(reason);
             }
-            VerificationResult::Partial { verified, total, reason } => {
+            VerificationResult::Partial {
+                verified,
+                total,
+                reason,
+            } => {
                 result_obj["status"] = json!("partial");
                 result_obj["verified"] = json!(*verified);
                 result_obj["total"] = json!(*total);
@@ -177,7 +189,10 @@ fn format_junit(results: &[(FunctionToVerify, VerificationResult)]) -> String {
     let failed = results
         .iter()
         .filter(|(_, r)| {
-            matches!(r, VerificationResult::Failed { .. } | VerificationResult::NoContracts { .. })
+            matches!(
+                r,
+                VerificationResult::Failed { .. } | VerificationResult::NoContracts { .. }
+            )
         })
         .count();
     let total = results.len();
@@ -295,7 +310,11 @@ fn format_markdown(results: &[(FunctionToVerify, VerificationResult)]) -> String
         let status = match result {
             VerificationResult::Passed => "✅ Passed".to_string(),
             VerificationResult::Failed { .. } => "❌ Failed".to_string(),
-            VerificationResult::Partial { verified, total, reason } => {
+            VerificationResult::Partial {
+                verified,
+                total,
+                reason,
+            } => {
                 let mut s = format!("⚠️ Partial ({}/{})", verified, total);
                 if let Some(r) = reason {
                     s.push_str(&format!(": {}", r));
@@ -318,7 +337,10 @@ fn format_markdown(results: &[(FunctionToVerify, VerificationResult)]) -> String
     let failed_results: Vec<_> = results
         .iter()
         .filter(|(_, r)| {
-            matches!(r, VerificationResult::Failed { .. } | VerificationResult::NoContracts { .. })
+            matches!(
+                r,
+                VerificationResult::Failed { .. } | VerificationResult::NoContracts { .. }
+            )
         })
         .collect();
 
@@ -336,7 +358,10 @@ fn format_markdown(results: &[(FunctionToVerify, VerificationResult)]) -> String
                     md.push_str(&format!("- **Reason:** {}\n\n", reason));
                 }
                 VerificationResult::NoContracts { section } => {
-                    md.push_str(&format!("- **Reason:** no contracts (section {})\n\n", section));
+                    md.push_str(&format!(
+                        "- **Reason:** no contracts (section {})\n\n",
+                        section
+                    ));
                 }
                 _ => {}
             }

@@ -6,9 +6,9 @@
 
 use crate::parser::{FunctionSpec, SpecParser, SpecSection};
 use proc_macro2::{Span, TokenStream};
-use std::path::PathBuf;
 use quote::quote;
 use regex::Regex;
+use std::path::PathBuf;
 use syn::{parse::Parse, parse_macro_input, Ident, LitStr, Token};
 
 /// Arguments for #[spec_locked] attribute
@@ -442,8 +442,7 @@ pub fn process_spec_locked(
             .filter(|p| !p.as_os_str().is_empty())
             .collect::<Vec<_>>()
     } else {
-        let manifest_dir =
-            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         let spec_dir = PathBuf::from(&manifest_dir).join("../blvm-spec");
         let protocol = spec_dir.join("PROTOCOL.md");
         let architecture = spec_dir.join("ARCHITECTURE.md");

@@ -61,12 +61,7 @@ fn parse_enum_membership(core: &str) -> Option<String> {
     let members_str = cap.get(1)?.as_str();
     let members: Vec<String> = members_str
         .split(',')
-        .map(|s| {
-            s.replace(r"\text{", "")
-                .replace('}', "")
-                .trim()
-                .to_string()
-        })
+        .map(|s| s.replace(r"\text{", "").replace('}', "").trim().to_string())
         .filter(|s| !s.is_empty() && *s != "..." && *s != "..")
         .collect();
     if members.is_empty() {
@@ -117,9 +112,18 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     }
     cond = cond.replace(r"{Some}(\mathcal{UC}), None}}", "{Some, None}");
     cond = cond.replace("{Some}(...), None}}", "{Some, None}");
-    cond = cond.replace(r"{(valid}, \mathcal{US}), (invalid}, \mathcal{US})}", "{valid, invalid}");
-    cond = cond.replace(r"{(valid, \mathcal{US}), (invalid, \mathcal{US})}", "{valid, invalid}");
-    cond = cond.replace(r"{(\mathcal{B}, success}), (\mathcal{B}, failure})}", "{success, failure}");
+    cond = cond.replace(
+        r"{(valid}, \mathcal{US}), (invalid}, \mathcal{US})}",
+        "{valid, invalid}",
+    );
+    cond = cond.replace(
+        r"{(valid, \mathcal{US}), (invalid, \mathcal{US})}",
+        "{valid, invalid}",
+    );
+    cond = cond.replace(
+        r"{(\mathcal{B}, success}), (\mathcal{B}, failure})}",
+        "{success, failure}",
+    );
     // CheckTxInputs: {(valid, Z), (invalid, 0)} -> valid/invalid
     cond = cond.replace(r"{(valid}, \mathbb{Z}), (invalid}, 0)}", "{valid, invalid}");
     cond = cond.replace(r"{(valid, \mathbb{Z}), (invalid, 0)}", "{valid, invalid}");
@@ -141,8 +145,8 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
 
     // Descriptive text → mathematical form (invariants we accept as axioms)
     let descriptive_patterns = [
-        ("Same inputs yield same hash", "true"),           // Determinism
-        ("Signature commits to UTXO value", "true"),      // Replay protection invariant
+        ("Same inputs yield same hash", "true"),     // Determinism
+        ("Signature commits to UTXO value", "true"), // Replay protection invariant
         ("Signature is bound to specific tapscript", "true"),
         ("OP_CODESEPARATOR position affects hash", "true"),
         ("uses tagged hash for domain separation", "true"),
@@ -158,13 +162,19 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         ("returns a block with at least one transaction", "true"),
         ("Coinbase is first, followed by mempool", "true"),
         ("Block structure follows deterministic rules", "true"),
-        ("compares double-SHA256 hash against expanded target", "(result == true || result == false)"),
+        (
+            "compares double-SHA256 hash against expanded target",
+            "(result == true || result == false)",
+        ),
         ("requires valid target expansion", "true"),
         ("produces 32-byte hash for comparison", "true"),
         ("validates template hash matches expected value", "true"),
         ("Tapscript disables OP_CHECKMULTISIG", "true"),
         ("preserves opcode boundaries", "true"),
-        ("interprets bytes as minimal little-endian signed integer", "true"),
+        (
+            "interprets bytes as minimal little-endian signed integer",
+            "true",
+        ),
         ("uses at most the last 11 block headers", "true"),
         ("calculates minimum height and time locks", "true"),
         ("no new peers created", "true"),
@@ -174,16 +184,16 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         ("combined stack and altstack size is bounded", "true"),
         ("executes ss first, then spk", "true"),
         ("starts with empty stack", "true"),
-        ("requires tx.inputs", "true"),           // UTXO must exist in us
+        ("requires tx.inputs", "true"), // UTXO must exist in us
         ("skip input", "true"),
         ("- If IsSequenceDisabled", "true"),
         ("disabled locks always pass", "true"),
-        ("when EnforceBIP94", "true"),  // Conditional rule
-        ("encoding and decoding are inverse", "true"),  // Round-trip
+        ("when EnforceBIP94", "true"), // Conditional rule
+        ("encoding and decoding are inverse", "true"), // Round-trip
         ("produces identical results", "true"),
         ("produce identical results", "true"),
         ("round-trip", "true"),
-        ("|result| = 4", "true"),  // 4-byte result (e.g. locktime)
+        ("|result| = 4", "true"), // 4-byte result (e.g. locktime)
         ("result is 4 bytes", "true"),
     ];
     for (pattern, rust) in descriptive_patterns {
@@ -193,7 +203,10 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     }
 
     // Domain-specific (generic): "extracts lower N bits" → result >= 0 && result < 2^N
-    if let Some(cap) = Regex::new(r"extracts lower (\d+) bits").ok().and_then(|re| re.captures(&cond)) {
+    if let Some(cap) = Regex::new(r"extracts lower (\d+) bits")
+        .ok()
+        .and_then(|re| re.captures(&cond))
+    {
         if let Ok(n) = cap.get(1).unwrap().as_str().parse::<u32>() {
             if n <= 64 {
                 let max_val = 1u64 << n;
@@ -247,7 +260,14 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
             for (i, ch) in rest.chars().enumerate() {
                 match ch {
                     '(' => depth += 1,
-                    ')' => if depth == 0 { close = Some(i); break } else { depth -= 1 },
+                    ')' => {
+                        if depth == 0 {
+                            close = Some(i);
+                            break;
+                        } else {
+                            depth -= 1
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -260,7 +280,11 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
                     .replace(r"min\_h", "min_h")
                     .replace(r"min\_t", "min_t")
                     .replace('\\', " ");
-                if inner.contains("||") || inner.contains("&&") || inner.contains(">=") || inner.contains("<=") {
+                if inner.contains("||")
+                    || inner.contains("&&")
+                    || inner.contains(">=")
+                    || inner.contains("<=")
+                {
                     return Some(inner.trim().to_string());
                 }
             }
@@ -307,7 +331,10 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
 
     // \in {valid, invalid}, {accepted, rejected}, {true, false} → Bool form
     let in_valid_invalid = Regex::new(r"\\in\s*\{[^}]*valid[^}]*invalid[^}]*\}").ok();
-    if in_valid_invalid.as_ref().map_or(false, |re| re.is_match(core)) {
+    if in_valid_invalid
+        .as_ref()
+        .map_or(false, |re| re.is_match(core))
+    {
         let core_before = core.split(" \\in ").next().unwrap_or(core);
         if core_before.contains("result") {
             let left = Regex::new(r"result\s*\([^)]*\)")
@@ -320,7 +347,10 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         }
     }
     let in_accepted_rejected = Regex::new(r"\\in\s*\{[^}]*accepted[^}]*rejected[^}]*\}").ok();
-    if in_accepted_rejected.as_ref().map_or(false, |re| re.is_match(core)) {
+    if in_accepted_rejected
+        .as_ref()
+        .map_or(false, |re| re.is_match(core))
+    {
         let core_before = core.split(" \\in ").next().unwrap_or(core);
         if core_before.contains("result") {
             let left = Regex::new(r"result\s*\([^)]*\)")
@@ -352,7 +382,8 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         }
     }
     // {success, failure} → Bool-like
-    if Regex::new(r"\\in\s*\{[^}]*success[^}]*failure[^}]*\}").map_or(false, |re| re.is_match(core)) {
+    if Regex::new(r"\\in\s*\{[^}]*success[^}]*failure[^}]*\}").map_or(false, |re| re.is_match(core))
+    {
         let core_before = core.split(" \\in ").next().unwrap_or(core);
         if core_before.contains("result") {
             return Some("(result == true || result == false)".to_string());
@@ -415,8 +446,12 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         while rust.contains("  ") {
             rust = rust.replace("  ", " ");
         }
-        if (rust.contains(">=") || rust.contains("<=") || rust.contains("==")
-            || rust.contains("!=") || rust.contains('>') || rust.contains('<'))
+        if (rust.contains(">=")
+            || rust.contains("<=")
+            || rust.contains("==")
+            || rust.contains("!=")
+            || rust.contains('>')
+            || rust.contains('<'))
             && !rust.contains("  ")
         {
             return Some(rust);
@@ -439,8 +474,12 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     while core.contains("  ") {
         core = core.replace("  ", " ");
     }
-    if (core.contains(">=") || core.contains("<=") || core.contains("==")
-        || core.contains("!=") || core.contains('>') || core.contains('<'))
+    if (core.contains(">=")
+        || core.contains("<=")
+        || core.contains("==")
+        || core.contains("!=")
+        || core.contains('>')
+        || core.contains('<'))
         && !core.contains("  ")
     {
         Some(core.trim().to_string())

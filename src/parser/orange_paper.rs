@@ -250,14 +250,18 @@ impl SpecParser {
         let content = std::fs::read_to_string(&p0)
             .map_err(|e| format!("Failed to read spec {}: {}", p0.display(), e))?;
         let mut parser = SpecParser::new(content);
-        parser.parse().map_err(|e| format!("Failed to parse spec: {}", e))?;
+        parser
+            .parse()
+            .map_err(|e| format!("Failed to parse spec: {}", e))?;
 
         for path in paths.iter().skip(1) {
             let p = resolve(path.as_ref())?;
             let content = std::fs::read_to_string(&p)
                 .map_err(|e| format!("Failed to read spec {}: {}", p.display(), e))?;
             let mut other = SpecParser::new(content);
-            other.parse().map_err(|e| format!("Failed to parse spec {}: {}", p.display(), e))?;
+            other
+                .parse()
+                .map_err(|e| format!("Failed to parse spec {}: {}", p.display(), e))?;
             parser.merge(other)?;
         }
         Ok(parser)
@@ -396,9 +400,7 @@ impl SpecParser {
 
         // Sections with Implementation Invariants: add synthetic "*" function so any
         // spec_locked function in this section gets those contracts (e.g. 10.6 Dandelion)
-        if let Some(invariant_func) =
-            self.extract_implementation_invariants(section_id, content)?
-        {
+        if let Some(invariant_func) = self.extract_implementation_invariants(section_id, content)? {
             functions.push(invariant_func);
         }
 
@@ -420,8 +422,11 @@ impl SpecParser {
         content: &str,
     ) -> Result<Option<FunctionSpec>, String> {
         let marker = "**Implementation Invariants**";
-        let inv_pos = content.find(marker)
-            .or_else(|| content.find("**Implementation Invariants (BLVM Specification Lock Verified)**"))
+        let inv_pos = content
+            .find(marker)
+            .or_else(|| {
+                content.find("**Implementation Invariants (BLVM Specification Lock Verified)**")
+            })
             .or_else(|| content.find("**Invariants**"));
         let Some(inv_pos) = inv_pos else {
             return Ok(None);
@@ -727,33 +732,34 @@ impl SpecParser {
 
         // Look for "**Properties**:" header (exact - not **Properties** (Updated):)
         // Also try "**Properties**:" with optional space before colon (spec format variation)
-        let props_start = block_content.find("**Properties**:")
+        let props_start = block_content
+            .find("**Properties**:")
             .or_else(|| block_content.find("**Properties** :"));
         if let Some(props_start) = props_start {
             let props_section = &block_content[props_start..];
             for cap in property_re.captures_iter(props_section) {
-                    let name = cap.get(1).unwrap().as_str().trim().to_string();
-                    let statement = cap.get(2).unwrap().as_str().trim().to_string();
+                let name = cap.get(1).unwrap().as_str().trim().to_string();
+                let statement = cap.get(2).unwrap().as_str().trim().to_string();
 
-                    // Determine property type
-                    let property_type = if statement.contains("≥")
-                        || statement.contains(">=")
-                        || statement.contains("≤")
-                        || statement.contains("<=")
-                        || statement.contains("=")
-                    {
-                        // Usually a postcondition or invariant
-                        if statement.contains("result") || statement.contains("return") {
-                            PropertyType::Ensures
-                        } else {
-                            PropertyType::Invariant
-                        }
-                    } else if statement.contains("implies") || statement.contains("⟹") {
-                        // A => B: conclusion B is postcondition (ensures when precondition A holds)
+                // Determine property type
+                let property_type = if statement.contains("≥")
+                    || statement.contains(">=")
+                    || statement.contains("≤")
+                    || statement.contains("<=")
+                    || statement.contains("=")
+                {
+                    // Usually a postcondition or invariant
+                    if statement.contains("result") || statement.contains("return") {
                         PropertyType::Ensures
                     } else {
-                        PropertyType::Ensures
-                    };
+                        PropertyType::Invariant
+                    }
+                } else if statement.contains("implies") || statement.contains("⟹") {
+                    // A => B: conclusion B is postcondition (ensures when precondition A holds)
+                    PropertyType::Ensures
+                } else {
+                    PropertyType::Ensures
+                };
 
                 func.properties.push(Property {
                     name,
@@ -1089,10 +1095,7 @@ impl SpecParser {
                     .find(|f| f.name.eq_ignore_ascii_case(func_name))
                     .or_else(|| {
                         // Fallback: section with Implementation Invariants ("*") applies to any function
-                        spec_section
-                            .functions
-                            .iter()
-                            .find(|f| f.name == "*")
+                        spec_section.functions.iter().find(|f| f.name == "*")
                     })
             } else {
                 spec_section.functions.first()

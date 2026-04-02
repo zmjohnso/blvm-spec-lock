@@ -51,7 +51,6 @@ impl Z3Translator {
         &self.ctx
     }
 
-
     /// Translate a Rust expression to a Z3 expression
     ///
     /// Uses a variable map to ensure same variable name = same Z3 variable within one expression
@@ -84,9 +83,9 @@ impl Z3Translator {
                 if matches!(bin.op, syn::BinOp::Shr(_)) {
                     if let Some(shift_val) = extract_int_literal(&bin.right) {
                         if (0..64).contains(&shift_val) {
-                            let left_int = left
-                                .as_int()
-                                .ok_or_else(|| TranslationError::TypeError("Expected Int".to_string()))?;
+                            let left_int = left.as_int().ok_or_else(|| {
+                                TranslationError::TypeError("Expected Int".to_string())
+                            })?;
                             let divisor = 1i64 << shift_val;
                             return Ok(left_int.div(&Int::from_i64(&self.ctx, divisor)).into());
                         }
@@ -95,9 +94,9 @@ impl Z3Translator {
                 if matches!(bin.op, syn::BinOp::Shl(_)) {
                     if let Some(shift_val) = extract_int_literal(&bin.right) {
                         if (0..64).contains(&shift_val) {
-                            let left_int = left
-                                .as_int()
-                                .ok_or_else(|| TranslationError::TypeError("Expected Int".to_string()))?;
+                            let left_int = left.as_int().ok_or_else(|| {
+                                TranslationError::TypeError("Expected Int".to_string())
+                            })?;
                             let multiplier = 1i64 << shift_val;
                             return Ok((left_int * Int::from_i64(&self.ctx, multiplier)).into());
                         }
@@ -162,12 +161,10 @@ impl Z3Translator {
                     self.translate_expr_with_vars(first, vars)
                 } else {
                     let name = format!("tuple_{}", vars.len());
-                    let var = vars
-                        .entry(name.clone())
-                        .or_insert_with(|| {
-                            let symbol = z3::Symbol::String(name);
-                            Int::new_const(&self.ctx, symbol).into()
-                        });
+                    let var = vars.entry(name.clone()).or_insert_with(|| {
+                        let symbol = z3::Symbol::String(name);
+                        Int::new_const(&self.ctx, symbol).into()
+                    });
                     Ok(var.clone())
                 }
             }
@@ -177,15 +174,19 @@ impl Z3Translator {
             }
             Expr::Range(range) => {
                 // 0..n or a..b - model as fresh Int (range bounds)
-                let _ = range.start.as_ref().map(|e| self.translate_expr_with_vars(e, vars));
-                let _ = range.end.as_ref().map(|e| self.translate_expr_with_vars(e, vars));
+                let _ = range
+                    .start
+                    .as_ref()
+                    .map(|e| self.translate_expr_with_vars(e, vars));
+                let _ = range
+                    .end
+                    .as_ref()
+                    .map(|e| self.translate_expr_with_vars(e, vars));
                 let name = format!("range_{}", vars.len());
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             Expr::Field(field) => self.translate_field_access(field, vars),
@@ -194,12 +195,10 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&index.expr, vars)?;
                 let _ = self.translate_expr_with_vars(&index.index, vars)?;
                 let fresh = format!("index_{}", vars.len());
-                let var = vars
-                    .entry(fresh.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(fresh);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(fresh.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(fresh);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             Expr::Block(block) => {
@@ -209,7 +208,8 @@ impl Z3Translator {
                         if let Some(init) = &local.init {
                             if let syn::Pat::Ident(ident) = &local.pat {
                                 let var_name = ident.ident.to_string();
-                                if let Ok(z3_expr) = self.translate_expr_with_vars(&init.expr, vars) {
+                                if let Ok(z3_expr) = self.translate_expr_with_vars(&init.expr, vars)
+                                {
                                     if z3_expr.as_int().is_some() || z3_expr.as_bool().is_some() {
                                         vars.insert(var_name, z3_expr);
                                     }
@@ -230,23 +230,19 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&fl.expr, vars);
                 let _ = self.translate_block_to_result_formula(&fl.body, vars);
                 let name = format!("for_loop_{}", vars.len());
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             Expr::Closure(closure) => {
                 let _ = self.translate_expr_with_vars(&closure.body, vars);
                 let name = format!("closure_{}", vars.len());
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             Expr::Repeat(repeat) => {
@@ -258,12 +254,10 @@ impl Z3Translator {
                     }
                 }
                 let name = format!("repeat_{}", vars.len());
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             Expr::Array(array) => {
@@ -274,12 +268,10 @@ impl Z3Translator {
                     }
                 }
                 let name = format!("array_{}", vars.len());
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             Expr::If(if_expr) => {
@@ -290,23 +282,19 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&while_expr.cond, vars);
                 let _ = self.translate_block_to_result_formula(&while_expr.body, vars);
                 let name = format!("while_loop_{}", vars.len());
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             Expr::Loop(loop_expr) => {
                 let _ = self.translate_block_to_result_formula(&loop_expr.body, vars);
                 let name = format!("loop_{}", vars.len());
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             Expr::Let(let_expr) => {
@@ -461,7 +449,12 @@ impl Z3Translator {
             }
             syn::BinOp::Eq(_) => {
                 // Equality: Bool-Bool, Int-Int, and Bool-Int (spec: \in {true,false} for 0/1)
-                let eq = match (left.as_bool(), left.as_int(), right.as_bool(), right.as_int()) {
+                let eq = match (
+                    left.as_bool(),
+                    left.as_int(),
+                    right.as_bool(),
+                    right.as_int(),
+                ) {
                     (Some(l), _, Some(r), _) => l._eq(&r),
                     (_, Some(l), _, Some(r)) => l._eq(&r),
                     (Some(l), _, _, Some(r)) => {
@@ -476,14 +469,21 @@ impl Z3Translator {
                         let r_int = r.ite(&one, &zero);
                         l._eq(&r_int)
                     }
-                    _ => return Err(TranslationError::TypeError(
-                        "Eq: operands must be Bool or Int (got mixed sorts)".to_string(),
-                    )),
+                    _ => {
+                        return Err(TranslationError::TypeError(
+                            "Eq: operands must be Bool or Int (got mixed sorts)".to_string(),
+                        ))
+                    }
                 };
                 Ok(eq.into())
             }
             syn::BinOp::Ne(_) => {
-                let eq = match (left.as_bool(), left.as_int(), right.as_bool(), right.as_int()) {
+                let eq = match (
+                    left.as_bool(),
+                    left.as_int(),
+                    right.as_bool(),
+                    right.as_int(),
+                ) {
                     (Some(l), _, Some(r), _) => l._eq(&r),
                     (_, Some(l), _, Some(r)) => l._eq(&r),
                     (Some(l), _, _, Some(r)) => {
@@ -498,32 +498,44 @@ impl Z3Translator {
                         let r_int = r.ite(&one, &zero);
                         l._eq(&r_int)
                     }
-                    _ => return Err(TranslationError::TypeError(
-                        "Ne: operands must be Bool or Int (got mixed sorts)".to_string(),
-                    )),
+                    _ => {
+                        return Err(TranslationError::TypeError(
+                            "Ne: operands must be Bool or Int (got mixed sorts)".to_string(),
+                        ))
+                    }
                 };
                 Ok(eq.not().into())
             }
             syn::BinOp::Lt(_) | syn::BinOp::Le(_) | syn::BinOp::Gt(_) | syn::BinOp::Ge(_) => {
                 // Coerce Bool to Int (true=1, false=0) for comparisons - handles spec patterns
-                let left_int = left.as_int().or_else(|| {
-                    left.as_bool().map(|b| {
-                        let one = Int::from_i64(&self.ctx, 1);
-                        let zero = Int::from_i64(&self.ctx, 0);
-                        b.ite(&one, &zero)
+                let left_int = left
+                    .as_int()
+                    .or_else(|| {
+                        left.as_bool().map(|b| {
+                            let one = Int::from_i64(&self.ctx, 1);
+                            let zero = Int::from_i64(&self.ctx, 0);
+                            b.ite(&one, &zero)
+                        })
                     })
-                }).ok_or_else(|| TranslationError::TypeError(
-                    "Lt/Le/Gt/Ge: left operand must be Int or Bool".to_string(),
-                ))?;
-                let right_int = right.as_int().or_else(|| {
-                    right.as_bool().map(|b| {
-                        let one = Int::from_i64(&self.ctx, 1);
-                        let zero = Int::from_i64(&self.ctx, 0);
-                        b.ite(&one, &zero)
+                    .ok_or_else(|| {
+                        TranslationError::TypeError(
+                            "Lt/Le/Gt/Ge: left operand must be Int or Bool".to_string(),
+                        )
+                    })?;
+                let right_int = right
+                    .as_int()
+                    .or_else(|| {
+                        right.as_bool().map(|b| {
+                            let one = Int::from_i64(&self.ctx, 1);
+                            let zero = Int::from_i64(&self.ctx, 0);
+                            b.ite(&one, &zero)
+                        })
                     })
-                }).ok_or_else(|| TranslationError::TypeError(
-                    "Lt/Le/Gt/Ge: right operand must be Int or Bool".to_string(),
-                ))?;
+                    .ok_or_else(|| {
+                        TranslationError::TypeError(
+                            "Lt/Le/Gt/Ge: right operand must be Int or Bool".to_string(),
+                        )
+                    })?;
                 let cmp = match op {
                     syn::BinOp::Lt(_) => left_int.lt(&right_int),
                     syn::BinOp::Le(_) => left_int.le(&right_int),
@@ -632,12 +644,10 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_with_result", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             "clear" | "extend_from_slice" | "push" | "copy_from_slice" => {
@@ -664,22 +674,21 @@ impl Z3Translator {
                 // Uninterpreted: digest(data) for determinism. Receiver holds state; use first arg if any.
                 if let Some(arg) = method.args.first() {
                     let data = self.translate_expr_with_vars(arg, vars)?;
-                    let data_int = data
-                        .as_int()
-                        .ok_or_else(|| TranslationError::TypeError("digest arg must be Int".to_string()))?;
+                    let data_int = data.as_int().ok_or_else(|| {
+                        TranslationError::TypeError("digest arg must be Int".to_string())
+                    })?;
                     let int_sort = Sort::int(&self.ctx);
-                    let fn_decl = z3::FuncDecl::new(&self.ctx, "sha256_digest", &[&int_sort], &int_sort);
+                    let fn_decl =
+                        z3::FuncDecl::new(&self.ctx, "sha256_digest", &[&int_sort], &int_sort);
                     return Ok(fn_decl.apply(&[&data_int]).into());
                 }
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_digest", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             "hash256" | "hash" => {
@@ -688,9 +697,9 @@ impl Z3Translator {
                     TranslationError::UnsupportedExpression("hash256/hash needs 1 arg".to_string())
                 })?;
                 let data = self.translate_expr_with_vars(arg, vars)?;
-                let data_int = data
-                    .as_int()
-                    .ok_or_else(|| TranslationError::TypeError("hash arg must be Int".to_string()))?;
+                let data_int = data.as_int().ok_or_else(|| {
+                    TranslationError::TypeError("hash arg must be Int".to_string())
+                })?;
                 let int_sort = Sort::int(&self.ctx);
                 let fn_decl = z3::FuncDecl::new(&self.ctx, "hash256", &[&int_sort], &int_sort);
                 Ok(fn_decl.apply(&[&data_int]).into())
@@ -711,7 +720,8 @@ impl Z3Translator {
                         if closure.inputs.len() == 1 {
                             if let syn::Pat::Ident(ident) = &closure.inputs[0] {
                                 let param = ident.ident.to_string();
-                                let _recv = self.translate_expr_with_vars(&method.receiver, vars)?;
+                                let _recv =
+                                    self.translate_expr_with_vars(&method.receiver, vars)?;
                                 let fresh = format!("map_{}", param);
                                 let new_var = Int::new_const(&self.ctx, z3::Symbol::String(fresh));
                                 let old = vars.insert(param.clone(), new_var.into());
@@ -731,24 +741,20 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_map", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             "borrow_mut" | "borrow" => {
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_borrow", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             "len" => {
@@ -760,12 +766,10 @@ impl Z3Translator {
                 } else {
                     format!("{}_len", base)
                 };
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             "iter" | "into_iter" | "par_iter" => {
@@ -781,12 +785,10 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_collect", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             "enumerate" => {
@@ -798,12 +800,10 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_next", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             "sum" => {
@@ -811,12 +811,10 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_sum", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             "fold" => {
@@ -827,12 +825,10 @@ impl Z3Translator {
                 }
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_fold", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             "reduce" => {
@@ -840,19 +836,19 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_reduce", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Int::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
                 Ok(var.clone())
             }
             "saturating_sub" => {
                 // a.saturating_sub(b) - model as a - b (determinism: same inputs => same output)
                 let left = self.translate_expr_with_vars(&method.receiver, vars)?;
                 let arg = method.args.first().ok_or_else(|| {
-                    TranslationError::UnsupportedExpression("saturating_sub needs 1 arg".to_string())
+                    TranslationError::UnsupportedExpression(
+                        "saturating_sub needs 1 arg".to_string(),
+                    )
                 })?;
                 let right = self.translate_expr_with_vars(arg, vars)?;
                 let left_int = left.as_int().ok_or_else(|| {
@@ -866,9 +862,9 @@ impl Z3Translator {
             "to_le_bytes" => {
                 // x.to_le_bytes() - uninterpreted for determinism (bytes from int)
                 let recv = self.translate_expr_with_vars(&method.receiver, vars)?;
-                let recv_int = recv
-                    .as_int()
-                    .ok_or_else(|| TranslationError::TypeError("to_le_bytes: expected Int".to_string()))?;
+                let recv_int = recv.as_int().ok_or_else(|| {
+                    TranslationError::TypeError("to_le_bytes: expected Int".to_string())
+                })?;
                 let int_sort = Sort::int(&self.ctx);
                 let fn_decl = z3::FuncDecl::new(&self.ctx, "to_le_bytes", &[&int_sort], &int_sort);
                 Ok(fn_decl.apply(&[&recv_int]).into())
@@ -878,12 +874,10 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_is_some", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Bool::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Bool::new_const(&self.ctx, symbol).into()
+                });
                 let bool_val = var.as_bool().ok_or_else(|| {
                     TranslationError::TypeError("is_some: expected Bool".to_string())
                 })?;
@@ -898,12 +892,10 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
                 let name = format!("{}_is_ok", base);
-                let var = vars
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        let symbol = z3::Symbol::String(name);
-                        Bool::new_const(&self.ctx, symbol).into()
-                    });
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Bool::new_const(&self.ctx, symbol).into()
+                });
                 let bool_val = var.as_bool().ok_or_else(|| {
                     TranslationError::TypeError("is_ok: expected Bool".to_string())
                 })?;
@@ -931,12 +923,10 @@ impl Z3Translator {
                     let _ = self.translate_expr_with_vars(receiver, vars);
                     let base = expr_to_var_hint(receiver);
                     let name = format!("{}_unwrap", base);
-                    let var = vars
-                        .entry(name.clone())
-                        .or_insert_with(|| {
-                            let symbol = z3::Symbol::String(name);
-                            Int::new_const(&self.ctx, symbol).into()
-                        });
+                    let var = vars.entry(name.clone()).or_insert_with(|| {
+                        let symbol = z3::Symbol::String(name);
+                        Int::new_const(&self.ctx, symbol).into()
+                    });
                     return Ok(var.clone());
                 }
                 Err(TranslationError::UnsupportedExpression(
@@ -963,12 +953,10 @@ impl Z3Translator {
         // result(args): Spec replaces GetMedianTimePast(headers) etc. with result(headers).
         // Treat as the result variable (return value of the function under verification).
         if base == "result" {
-            let var = vars
-                .entry("result".to_string())
-                .or_insert_with(|| {
-                    let symbol = z3::Symbol::String("result".to_string());
-                    Int::new_const(&self.ctx, symbol).into()
-                });
+            let var = vars.entry("result".to_string()).or_insert_with(|| {
+                let symbol = z3::Symbol::String("result".to_string());
+                Int::new_const(&self.ctx, symbol).into()
+            });
             return Ok(var.clone().into());
         }
         // Ok(expr) / Some(expr): result is the inner value (for Result<T,E> / Option<T> returns)
@@ -981,12 +969,10 @@ impl Z3Translator {
                 let _ = self.translate_expr_with_vars(arg, vars);
             }
             let name = format!("{}_result", base);
-            let var = vars
-                .entry(name.clone())
-                .or_insert_with(|| {
-                    let symbol = z3::Symbol::String(name);
-                    Int::new_const(&self.ctx, symbol).into()
-                });
+            let var = vars.entry(name.clone()).or_insert_with(|| {
+                let symbol = z3::Symbol::String(name);
+                Int::new_const(&self.ctx, symbol).into()
+            });
             return Ok(var.clone());
         }
         // Err(_): for Result<T>, use 0 for determinism (0=Err, 1=Ok(false), 2=Ok(true))
@@ -1087,24 +1073,20 @@ impl Z3Translator {
             for arg in &call.args {
                 let _ = self.translate_expr_with_vars(arg, vars);
             }
-            let var = vars
-                .entry(fresh_name.clone())
-                .or_insert_with(|| {
-                    let symbol = z3::Symbol::String(fresh_name);
-                    Int::new_const(&self.ctx, symbol).into()
-                });
+            let var = vars.entry(fresh_name.clone()).or_insert_with(|| {
+                let symbol = z3::Symbol::String(fresh_name);
+                Int::new_const(&self.ctx, symbol).into()
+            });
             return Ok(var.clone());
         }
         if let Some(fresh_name) = known_bool_returning_function(&name) {
             for arg in &call.args {
                 let _ = self.translate_expr_with_vars(arg, vars);
             }
-            let var = vars
-                .entry(fresh_name.clone())
-                .or_insert_with(|| {
-                    let symbol = z3::Symbol::String(fresh_name);
-                    Bool::new_const(&self.ctx, symbol).into()
-                });
+            let var = vars.entry(fresh_name.clone()).or_insert_with(|| {
+                let symbol = z3::Symbol::String(fresh_name);
+                Bool::new_const(&self.ctx, symbol).into()
+            });
             return Ok(var.clone());
         }
         // Generic fallback: treat unknown calls as uninterpreted (same inputs => same output)
@@ -1170,7 +1152,9 @@ impl Z3Translator {
                         Bool::new_const(&self.ctx, symbol).into()
                     })
                     .as_bool()
-                    .ok_or_else(|| TranslationError::TypeError("is_some: expected Bool".to_string()))?
+                    .ok_or_else(|| {
+                        TranslationError::TypeError("is_some: expected Bool".to_string())
+                    })?
                     .clone();
                 let body_int = body_z3.as_int().ok_or_else(|| {
                     TranslationError::TypeError("match body: expected Int".to_string())
@@ -1224,12 +1208,10 @@ impl Z3Translator {
         vars: &mut Z3VarMap<'a>,
     ) -> Result<z3::ast::Dynamic<'a>, TranslationError> {
         let name = field_expr_to_var_name(field);
-        let var = vars
-            .entry(name.clone())
-            .or_insert_with(|| {
-                let symbol = z3::Symbol::String(name);
-                Int::new_const(&self.ctx, symbol).into()
-            });
+        let var = vars.entry(name.clone()).or_insert_with(|| {
+            let symbol = z3::Symbol::String(name);
+            Int::new_const(&self.ctx, symbol).into()
+        });
         Ok(var.clone())
     }
 
@@ -1344,7 +1326,8 @@ impl Z3Translator {
                     if let Expr::Assign(assign) = expr {
                         if let Expr::Path(path) = &*assign.left {
                             let var_name = path_to_string(&path.path);
-                            if let Ok(z3_expr) = self.translate_expr_with_vars(&assign.right, vars) {
+                            if let Ok(z3_expr) = self.translate_expr_with_vars(&assign.right, vars)
+                            {
                                 if z3_expr.as_int().is_some() || z3_expr.as_bool().is_some() {
                                     vars.insert(var_name, z3_expr);
                                 }
@@ -1369,13 +1352,20 @@ impl Z3Translator {
                             if let Expr::Path(path) = &*bin.left {
                                 let var_name = path_to_string(&path.path);
                                 let left = vars.get(&var_name).cloned().unwrap_or_else(|| {
-                                    Int::new_const(&self.ctx, z3::Symbol::String(var_name.clone())).into()
+                                    Int::new_const(&self.ctx, z3::Symbol::String(var_name.clone()))
+                                        .into()
                                 });
                                 if let Ok(right) = self.translate_expr_with_vars(&bin.right, vars) {
-                                    if let (Some(left_int), Some(right_int)) = (left.as_int(), right.as_int()) {
+                                    if let (Some(left_int), Some(right_int)) =
+                                        (left.as_int(), right.as_int())
+                                    {
                                         let result = match bin.op {
-                                            syn::BinOp::AddAssign(_) => (left_int + right_int).into(),
-                                            syn::BinOp::SubAssign(_) => (left_int - right_int).into(),
+                                            syn::BinOp::AddAssign(_) => {
+                                                (left_int + right_int).into()
+                                            }
+                                            syn::BinOp::SubAssign(_) => {
+                                                (left_int - right_int).into()
+                                            }
                                             _ => continue,
                                         };
                                         vars.insert(var_name, result);
@@ -1573,9 +1563,7 @@ impl Z3Translator {
                     }
                     let z3_expr = self.translate_expr_with_vars(return_expr, vars)?;
                     let result_var = vars.get("result").ok_or_else(|| {
-                        TranslationError::UnsupportedExpression(
-                            "No result variable".to_string(),
-                        )
+                        TranslationError::UnsupportedExpression("No result variable".to_string())
                     })?;
                     let eq = if let Some(int_val) = z3_expr.as_int() {
                         result_var.as_int().map(|r| r._eq(&int_val))
@@ -1615,9 +1603,7 @@ impl Z3Translator {
                 // Direct call (e.g. verify_script_with_context_full) - returns Int
                 if let Ok(z3_expr) = self.translate_expr_with_vars(expr, vars) {
                     let result_var = vars.get("result").ok_or_else(|| {
-                        TranslationError::UnsupportedExpression(
-                            "No result variable".to_string(),
-                        )
+                        TranslationError::UnsupportedExpression("No result variable".to_string())
                     })?;
                     let eq = if let Some(int_val) = z3_expr.as_int() {
                         result_var.as_int().map(|r| r._eq(&int_val))
@@ -1635,9 +1621,7 @@ impl Z3Translator {
                 // Direct expression (implicit return)
                 if let Ok(z3_expr) = self.translate_expr_with_vars(expr, vars) {
                     let result_var = vars.get("result").ok_or_else(|| {
-                        TranslationError::UnsupportedExpression(
-                            "No result variable".to_string(),
-                        )
+                        TranslationError::UnsupportedExpression("No result variable".to_string())
                     })?;
                     let eq = if let Some(int_val) = z3_expr.as_int() {
                         result_var.as_int().map(|r| r._eq(&int_val))
@@ -1679,9 +1663,7 @@ impl Z3Translator {
                 _ => {
                     let z3_expr = self.translate_expr_with_vars(else_branch, vars)?;
                     let result_var = vars.get("result").ok_or_else(|| {
-                        TranslationError::UnsupportedExpression(
-                            "No result variable".to_string(),
-                        )
+                        TranslationError::UnsupportedExpression("No result variable".to_string())
                     })?;
                     result_var
                         .as_int()
@@ -2018,15 +2000,16 @@ fn extract_int_literal(expr: &syn::Expr) -> Option<i64> {
             return Some(v);
         }
         let s = int_lit.to_string();
-        let (digits, radix) = if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-            (rest, 16u32)
-        } else if let Some(rest) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
-            (rest, 8)
-        } else if let Some(rest) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
-            (rest, 2)
-        } else {
-            return None;
-        };
+        let (digits, radix) =
+            if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                (rest, 16u32)
+            } else if let Some(rest) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
+                (rest, 8)
+            } else if let Some(rest) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
+                (rest, 2)
+            } else {
+                return None;
+            };
         i64::from_str_radix(digits, radix).ok()
     } else {
         None
@@ -2115,10 +2098,11 @@ fn known_uninterpreted_function(name: &str) -> Option<(&'static str, Option<usiz
 fn known_int_returning_function(name: &str) -> Option<String> {
     let base = name.split("::").last().unwrap_or(name);
     match base {
-        "get_block_subsidy" | "get_next_work_required" | "expand_target"
-        | "compress_target" | "difficulty_from_bits" => {
-            Some(format!("call_{}_result", base))
-        }
+        "get_block_subsidy"
+        | "get_next_work_required"
+        | "expand_target"
+        | "compress_target"
+        | "difficulty_from_bits" => Some(format!("call_{}_result", base)),
         "calculate_merkle_root" | "calculate_block_hash" => Some(format!("call_{}_result", base)),
         "extract_sequence_locktime_value" | "ExtractSequenceLocktimeValue" => {
             Some("call_extract_sequence_locktime_value_result".to_string())
