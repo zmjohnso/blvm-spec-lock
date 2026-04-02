@@ -1,5 +1,10 @@
 # BLVM Spec Lock
 
+[![crates.io](https://img.shields.io/crates/v/blvm-spec-lock.svg)](https://crates.io/crates/blvm-spec-lock)
+[![docs.rs](https://docs.rs/blvm-spec-lock/badge.svg)](https://docs.rs/blvm-spec-lock)
+[![CI](https://github.com/BTCDecoded/blvm-spec-lock/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/BTCDecoded/blvm-spec-lock/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 Purpose-built formal verification tool for Bitcoin Commons.
 
 **Locking mechanism**: See [docs/LOCKING_MECHANISM.md](docs/LOCKING_MECHANISM.md) for the full lifecycle (discover → enrich → verify), attribute syntax, and status semantics. **Spec wording**: See [SPEC_WORDING.md](SPEC_WORDING.md) for parseable condition patterns. **How to annotate**: See [docs/ANNOTATION_GUIDE.md](docs/ANNOTATION_GUIDE.md) for adding `#[spec_locked]` to new functions.

@@ -5,13 +5,11 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
   contents: read
-  actions: write
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,225 +18,295 @@ env:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, builds]
+    if: |
+      github.event_name != 'push' ||
+      github.event.head_commit == null ||
+      (!contains(github.event.head_commit.message, '[skip ci]') &&
+       !contains(github.event.head_commit.message, '[ci skip]') &&
+       !contains(github.event.head_commit.message, '[no ci]'))
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.88.0
-      
-      - name: Cache cargo dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-      
-      - name: Build
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build cargo-spec-lock binary
         run: cargo build --release --bin cargo-spec-lock
-      
+
       - name: Test
         run: cargo test --all-features
-      
+
       - name: Clippy
         run: cargo clippy --all-features -- -D warnings
-      
-      - name: Format check
+
+      - name: Format
         run: cargo fmt --all -- --check
 
-  release:
-    name: Release
+  publish:
+    name: Release & publish
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, builds]
     if: |
-      always() &&
-      needs.test.result == 'success' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
-      (github.event_name != 'push' || github.event.head_commit == null || 
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event.head_commit == null ||
        (!contains(github.event.head_commit.message, '[skip ci]') &&
         !contains(github.event.head_commit.message, '[ci skip]') &&
         !contains(github.event.head_commit.message, '[no ci]') &&
-        !contains(github.event.head_commit.message, '[skip release]')))
+        !contains(github.event.head_commit.message, '[skip publish]')))
     permissions:
       contents: write
-      id-token: write
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+
+      - name: Check for crates.io token
+        id: gate
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "⚠️  CARGO_REGISTRY_TOKEN not set, skipping release and crates.io publish"
+            echo "do_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "do_release=true" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
+        if: steps.gate.outputs.do_release == 'true'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.88.0
-      
+
+      - name: Check for breaking changes (advisory)
+        if: steps.gate.outputs.do_release == 'true'
+        run: |
+          echo "Checking commit messages since last tag for breaking-change hints..."
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            COMMIT_RANGE="${LAST_TAG}..HEAD"
+          else
+            COMMIT_RANGE="HEAD~20..HEAD"
+          fi
+          if git log "$COMMIT_RANGE" --pretty=format:"%s" 2>/dev/null | grep -qiE "(breaking|!|major|incompatible)"; then
+            echo "⚠️  Possible breaking changes in commits — consider a manual major/minor bump if needed"
+            git log "$COMMIT_RANGE" --pretty=format:"  - %s" | grep -iE "(breaking|!|major|incompatible)" || true
+          else
+            echo "No obvious breaking-change markers in commit subjects"
+          fi
+
       - name: Determine version
+        if: steps.gate.outputs.do_release == 'true'
         id: version
         run: |
           CURRENT=$(grep -A 10 '^\[package\]' Cargo.toml | grep '^version = ' | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
           if [ -z "$CURRENT" ]; then
-            echo "❌ Could not determine current version from Cargo.toml"
+            echo "Could not read version from [package] in Cargo.toml"
             exit 1
           fi
-          
-          echo "Current version: ${CURRENT}"
-          
           if ! echo "$CURRENT" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "❌ Invalid version format: ${CURRENT} (expected X.Y.Z)"
+            echo "Invalid version format: ${CURRENT} (expected X.Y.Z)"
             exit 1
           fi
-          
           MAJOR=$(echo "$CURRENT" | cut -d. -f1)
           MINOR=$(echo "$CURRENT" | cut -d. -f2)
           PATCH=$(echo "$CURRENT" | cut -d. -f3)
-          
           PATCH=$((PATCH + 1))
           VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          
-          CRATE_NAME=$(grep -E '^name = ' Cargo.toml | sed -E 's/^name = "([^"]+)".*/\1/')
+          CRATE_NAME=$(grep -E '^name = ' Cargo.toml | head -1 | sed -E 's/^name = "([^"]+)".*/\1/')
           MAX_ATTEMPTS=10
           ATTEMPT=0
-          
           while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            echo "Checking if ${CRATE_NAME} v${VERSION} exists on crates.io..."
             API_RESPONSE=$(curl -s --max-time 10 "https://crates.io/api/v1/crates/${CRATE_NAME}/versions" 2>/dev/null || echo "")
-            
             VERSION_EXISTS="false"
             if [ -n "$API_RESPONSE" ] && ! echo "$API_RESPONSE" | grep -q '"detail"'; then
-              if command -v jq &> /dev/null; then
+              if command -v jq &>/dev/null; then
                 EXISTS_CHECK=$(echo "$API_RESPONSE" | jq -r ".versions[] | select(.num == \"${VERSION}\") | .num" | head -1)
-                if [ "$EXISTS_CHECK" = "$VERSION" ]; then
-                  VERSION_EXISTS="true"
-                fi
-              else
-                if echo "$API_RESPONSE" | grep -q "\"num\":\"${VERSION}\""; then
-                  VERSION_EXISTS="true"
-                fi
-              fi
-            else
-              if cargo search "$CRATE_NAME" --limit 100 2>/dev/null | grep -qE "\"${CRATE_NAME}\".*\"${VERSION}\""; then
+                [ "$EXISTS_CHECK" = "$VERSION" ] && VERSION_EXISTS="true"
+              elif echo "$API_RESPONSE" | grep -q "\"num\":\"${VERSION}\""; then
                 VERSION_EXISTS="true"
               fi
+            elif cargo search "$CRATE_NAME" --limit 100 2>/dev/null | grep -qE "\"${CRATE_NAME}\".*\"${VERSION}\""; then
+              VERSION_EXISTS="true"
             fi
-            
             if [ "$VERSION_EXISTS" = "true" ]; then
+              echo "Version ${VERSION} already on crates.io, bumping patch..."
+              MAJOR=$(echo "$VERSION" | cut -d. -f1)
+              MINOR=$(echo "$VERSION" | cut -d. -f2)
+              PATCH=$(echo "$VERSION" | cut -d. -f3)
               PATCH=$((PATCH + 1))
               VERSION="${MAJOR}.${MINOR}.${PATCH}"
               ATTEMPT=$((ATTEMPT + 1))
             else
+              echo "Version ${VERSION} is available"
               break
             fi
           done
-          
           if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
-            echo "❌ Failed to find available version after ${MAX_ATTEMPTS} attempts"
+            echo "Could not find a free version after ${MAX_ATTEMPTS} attempts"
             exit 1
           fi
-          
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "version_tag=v${VERSION}" >> $GITHUB_OUTPUT
-      
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Regenerate Cargo.lock (dependencies)
+        if: steps.gate.outputs.do_release == 'true'
+        run: |
+          rm -f Cargo.lock
+          cargo update
+
       - name: Update version in Cargo.toml
-        if: env.CARGO_REGISTRY_TOKEN != ''
+        if: steps.gate.outputs.do_release == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          export VERSION
           awk -v ver="$VERSION" '
             /^\[package\]/ { in_package = 1; print; next }
             /^\[/ { in_package = 0 }
-            in_package && /^version = / { 
+            in_package && /^version = / {
               print "version = \"" ver "\""
               next
             }
             { print }
           ' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
-      
-      - name: Check for crates.io token
-        if: env.CARGO_REGISTRY_TOKEN != ''
+          echo "Updated Cargo.toml to version ${VERSION}"
+
+      - name: Regenerate Cargo.lock after version bump
+        if: steps.gate.outputs.do_release == 'true'
         run: |
-          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
-            echo "⚠️  CARGO_REGISTRY_TOKEN not set, skipping crate publication"
-            exit 0
+          rm -f Cargo.lock
+          cargo update
+
+      - name: Pre-release smoke test
+        if: steps.gate.outputs.do_release == 'true'
+        run: |
+          cargo check --all-features --quiet
+          cargo build --release --quiet --bin cargo-spec-lock
+          cargo test --all-features --quiet -- --test-threads=1
+
+      - name: Commit version bump
+        if: steps.gate.outputs.do_release == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml
+          if git diff --staged --quiet; then
+            echo "No Cargo.toml changes to commit"
+          else
+            git commit -m "Bump version to ${{ steps.version.outputs.version }} for release [skip ci]"
+            if [ -n "${{ secrets.REPO_ACCESS_TOKEN }}" ]; then
+              git remote set-url origin "https://${{ secrets.REPO_ACCESS_TOKEN }}@github.com/${{ github.repository }}.git"
+              git push origin "HEAD:${{ github.ref_name }}"
+            else
+              echo "⚠️  REPO_ACCESS_TOKEN not set — cannot push version bump (set org/repo secret for auto bump on main)"
+            fi
           fi
-      
+
       - name: Configure cargo for crates.io
-        if: env.CARGO_REGISTRY_TOKEN != ''
+        if: steps.gate.outputs.do_release == 'true'
+        run: cargo login "${CARGO_REGISTRY_TOKEN}"
+
+      - name: Verify package version
+        if: steps.gate.outputs.do_release == 'true'
         run: |
-          cargo login "${CARGO_REGISTRY_TOKEN}"
-      
-      - name: Check if version already exists
-        if: env.CARGO_REGISTRY_TOKEN != ''
+          EXPECTED="${{ steps.version.outputs.version }}"
+          ACTUAL=$(grep -A 10 '^\[package\]' Cargo.toml | grep '^version = ' | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
+          [ "$ACTUAL" = "$EXPECTED" ] || { echo "Version mismatch: expected ${EXPECTED}, got ${ACTUAL}"; exit 1; }
+
+      - name: Package metadata
+        if: steps.gate.outputs.do_release == 'true'
+        run: cargo package --list
+
+      - name: Dry-run publish
+        if: steps.gate.outputs.do_release == 'true'
+        run: cargo publish --dry-run
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Check if version already on crates.io
+        if: steps.gate.outputs.do_release == 'true'
         id: check-version
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          CRATE_NAME=$(grep -E '^name = ' Cargo.toml | sed -E 's/^name = "([^"]+)".*/\1/')
-          
-          API_RESPONSE=$(curl -s --max-time 10 "https://crates.io/api/v1/crates/${CRATE_NAME}/versions" 2>/dev/null || echo "")
-          
-          if [ -n "$API_RESPONSE" ] && ! echo "$API_RESPONSE" | grep -q '"detail"'; then
-            if command -v jq &> /dev/null; then
-              VERSION_EXISTS=$(echo "$API_RESPONSE" | jq -r ".versions[] | select(.num == \"${VERSION}\") | .num" | head -1)
-              if [ "$VERSION_EXISTS" = "$VERSION" ]; then
-                echo "exists=true" >> $GITHUB_OUTPUT
-              else
-                echo "exists=false" >> $GITHUB_OUTPUT
-              fi
+          CRATE_NAME=$(grep -E '^name = ' Cargo.toml | head -1 | sed -E 's/^name = "([^"]+)".*/\1/')
+          API_RESPONSE=""
+          for i in 1 2 3; do
+            API_RESPONSE=$(curl -s --max-time 10 "https://crates.io/api/v1/crates/${CRATE_NAME}/versions" 2>/dev/null || echo "")
+            [ -n "$API_RESPONSE" ] && ! echo "$API_RESPONSE" | grep -q '"detail"' && break
+            [ "$i" -lt 3 ] && sleep $((i * 2))
+          done
+          if [ -z "$API_RESPONSE" ] || echo "$API_RESPONSE" | grep -q '"detail"'; then
+            if cargo search "$CRATE_NAME" --limit 100 2>/dev/null | grep -qE "\"${CRATE_NAME}\".*\"${VERSION}\""; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
             else
-              if echo "$API_RESPONSE" | grep -q "\"num\":\"${VERSION}\""; then
-                echo "exists=true" >> $GITHUB_OUTPUT
-              else
-                echo "exists=false" >> $GITHUB_OUTPUT
-              fi
+              echo "exists=false" >> "$GITHUB_OUTPUT"
             fi
+          elif command -v jq &>/dev/null; then
+            V=$(echo "$API_RESPONSE" | jq -r ".versions[] | select(.num == \"${VERSION}\") | .num" | head -1)
+            if [ "$V" = "$VERSION" ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+          elif echo "$API_RESPONSE" | grep -q "\"num\":\"${VERSION}\""; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
-      
+
       - name: Publish to crates.io
-        if: env.CARGO_REGISTRY_TOKEN != '' && steps.check-version.outputs.exists != 'true'
+        if: steps.gate.outputs.do_release == 'true'
         id: publish
         continue-on-error: true
         run: |
           set +e
           VERSION="${{ steps.version.outputs.version }}"
-          CRATE_NAME=$(grep -E '^name = ' Cargo.toml | sed -E 's/^name = "([^"]+)".*/\1/')
-          
+          CRATE_NAME=$(grep -E '^name = ' Cargo.toml | head -1 | sed -E 's/^name = "([^"]+)".*/\1/')
+          ACTUAL=$(grep -A 10 '^\[package\]' Cargo.toml | grep '^version = ' | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
+          if [ "$ACTUAL" != "$VERSION" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
           if [ "${{ steps.check-version.outputs.exists }}" = "true" ]; then
-            echo "⚠️  Version ${VERSION} already exists on crates.io, skipping publish"
-            echo "published=false" >> $GITHUB_OUTPUT
+            echo "Version ${VERSION} already on crates.io, skipping publish"
+            echo "published=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          
-          echo "📦 Publishing ${CRATE_NAME} v${VERSION} to crates.io..."
-          
-          PUBLISH_OUTPUT=$(cargo publish --token "${CARGO_REGISTRY_TOKEN}" 2>&1)
-          PUBLISH_EXIT_CODE=$?
-          
-          if [ $PUBLISH_EXIT_CODE -eq 0 ]; then
-            echo "✅ Successfully published ${CRATE_NAME} v${VERSION}"
-            echo "published=true" >> $GITHUB_OUTPUT
-            echo "Waiting 30 seconds for crates.io to index..."
+          OUT=$(cargo publish --token "${CARGO_REGISTRY_TOKEN}" 2>&1)
+          CODE=$?
+          echo "$OUT"
+          if [ $CODE -eq 0 ]; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
             sleep 30
+          elif echo "$OUT" | grep -qi "already exists"; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
           else
-            if echo "$PUBLISH_OUTPUT" | grep -q "already exists"; then
-              echo "⚠️  Version ${VERSION} already exists on crates.io"
-              echo "published=false" >> $GITHUB_OUTPUT
-              exit 0
-            else
-              echo "❌ Failed to publish ${CRATE_NAME} v${VERSION}"
-              echo "$PUBLISH_OUTPUT"
-              echo "published=false" >> $GITHUB_OUTPUT
-              exit $PUBLISH_EXIT_CODE
-            fi
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-
-
+      - name: Final verify on crates.io
+        if: steps.gate.outputs.do_release == 'true'
+        id: final-verify
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          CRATE_NAME=$(grep -E '^name = ' Cargo.toml | head -1 | sed -E 's/^name = "([^"]+)".*/\1/')
+          sleep 5
+          API_RESPONSE=$(curl -s --max-time 10 "https://crates.io/api/v1/crates/${CRATE_NAME}/versions" 2>/dev/null || echo "")
+          if [ -n "$API_RESPONSE" ] && ! echo "$API_RESPONSE" | grep -q '"detail"'; then
+            if command -v jq &>/dev/null; then
+              V=$(echo "$API_RESPONSE" | jq -r ".versions[] | select(.num == \"${VERSION}\") | .num" | head -1)
+              [ "$V" = "$VERSION" ] && echo "exists=true" >> "$GITHUB_OUTPUT" || echo "exists=false" >> "$GITHUB_OUTPUT"
+            elif echo "$API_RESPONSE" | grep -q "\"num\":\"${VERSION}\""; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "exists=${{ steps.check-version.outputs.exists }}" >> "$GITHUB_OUTPUT"
+          fi
