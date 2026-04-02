@@ -9,7 +9,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use blvm_spec_lock::{spec_locked, requires, ensures};
 //!
 //! /// GetBlockSubsidy: ℕ → ℤ
@@ -20,6 +20,9 @@
 //!     0
 //! }
 //! ```
+//!
+//! (Examples are `ignore` for `cargo test` because `#[spec_locked]` needs the Orange Paper
+//! at `../blvm-spec` relative to this crate; run `cargo spec-lock` in a full workspace.)
 //!
 //! The macro automatically:
 //! 1. Reads the Orange Paper specification
@@ -57,7 +60,7 @@ use proc_macro::TokenStream;
 /// # Examples
 ///
 /// Simple positional syntax (recommended):
-/// ```rust
+/// ```rust,ignore
 /// use blvm_spec_lock::spec_locked;
 ///
 /// #[spec_locked("6.1", "GetBlockSubsidy")]
@@ -67,7 +70,7 @@ use proc_macro::TokenStream;
 /// ```
 ///
 /// Combined format:
-/// ```rust
+/// ```rust,ignore
 /// use blvm_spec_lock::spec_locked;
 ///
 /// #[spec_locked("6.1::GetBlockSubsidy")]
@@ -77,7 +80,7 @@ use proc_macro::TokenStream;
 /// ```
 ///
 /// Named parameters (also supported):
-/// ```rust
+/// ```rust,ignore
 /// use blvm_spec_lock::spec_locked;
 ///
 /// #[spec_locked(section = "6.1", function = "GetBlockSubsidy")]
