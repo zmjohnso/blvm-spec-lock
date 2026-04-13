@@ -34,8 +34,12 @@ jobs:
       - name: Cache
         uses: Swatinem/rust-cache@v2
 
+      # Single job + no incremental: avoids flaky "could not parse/generate dep info" (.d missing)
+      # on self-hosted runners (NFS / high parallelism / cache races).
       - name: Build cargo-spec-lock binary
-        run: cargo build --release --bin cargo-spec-lock
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: cargo build --release -j 1 --bin cargo-spec-lock
 
       - name: Test
         run: cargo test --all-features
@@ -171,9 +175,11 @@ jobs:
 
       - name: Pre-release smoke test
         if: steps.gate.outputs.do_release == 'true'
+        env:
+          CARGO_INCREMENTAL: "0"
         run: |
           cargo check --all-features --quiet
-          cargo build --release --quiet --bin cargo-spec-lock
+          cargo build --release --quiet -j 1 --bin cargo-spec-lock
           cargo test --all-features --quiet -- --test-threads=1
 
       - name: Commit version bump
