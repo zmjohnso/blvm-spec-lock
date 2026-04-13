@@ -360,7 +360,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                         ) {
                             failed_contracts.push((
                                 format!("{:?}", contract.contract_type),
-                                format!("Z3 verification failed: {}", e),
+                                format!("Z3 verification failed: {e}"),
                             ));
                         } else {
                             verified_count += 1;
@@ -426,7 +426,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                             } else {
                                 failed_contracts.push((
                                     format!("{:?}", contract.contract_type),
-                                    format!("Determinism: {}", e),
+                                    format!("Determinism: {e}"),
                                 ));
                             }
                         }
@@ -471,7 +471,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                         ) {
                             failed_contracts.push((
                                 format!("{:?}", contract.contract_type),
-                                format!("Z3: {}", e),
+                                format!("Z3: {e}"),
                             ));
                         } else {
                             verified_count += 1;
@@ -630,8 +630,8 @@ fn verify_determinism(
             };
             Err(msg)
         }
-        VerificationResult::Unknown { reason } => Err(format!("Z3 unknown: {}", reason)),
-        VerificationResult::Error { error } => Err(format!("Z3 error: {}", error)),
+        VerificationResult::Unknown { reason } => Err(format!("Z3 unknown: {reason}")),
+        VerificationResult::Error { error } => Err(format!("Z3 error: {error}")),
     }
 }
 
@@ -693,10 +693,8 @@ fn verify_with_z3(
             };
             Err(msg)
         }
-        VerificationResult::Unknown { reason } => {
-            Err(format!("Z3 verification unknown: {}", reason))
-        }
-        VerificationResult::Error { error } => Err(format!("Z3 verification error: {}", error)),
+        VerificationResult::Unknown { reason } => Err(format!("Z3 verification unknown: {reason}")),
+        VerificationResult::Error { error } => Err(format!("Z3 verification error: {error}")),
     }
 }
 

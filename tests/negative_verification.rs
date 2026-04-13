@@ -41,22 +41,16 @@ fn wrong_implementation_fails_verification() {
 
     assert!(
         !output.status.success(),
-        "Verification should FAIL for wrong implementation, but it passed.\nstdout:\n{}\nstderr:\n{}",
-        stdout,
-        stderr
+        "Verification should FAIL for wrong implementation, but it passed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 
     assert!(
         stdout.contains("FAILED") || stderr.contains("FAILED"),
-        "Output should mention failure.\nstdout:\n{}\nstderr:\n{}",
-        stdout,
-        stderr
+        "Output should mention failure.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 
     assert!(
         stdout.contains("get_block_subsidy") || stderr.contains("get_block_subsidy"),
-        "Output should mention get_block_subsidy.\nstdout:\n{}\nstderr:\n{}",
-        stdout,
-        stderr
+        "Output should mention get_block_subsidy.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 }

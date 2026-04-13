@@ -33,8 +33,8 @@ fn format_human(results: &[(FunctionToVerify, VerificationResult)]) -> String {
             }
             VerificationResult::Failed { contract, reason } => {
                 output.push_str("  ❌ Status: FAILED\n");
-                output.push_str(&format!("    Contract: {}\n", contract));
-                output.push_str(&format!("    Reason: {}\n", reason));
+                output.push_str(&format!("    Contract: {contract}\n"));
+                output.push_str(&format!("    Reason: {reason}\n"));
             }
             VerificationResult::Partial {
                 verified,
@@ -42,17 +42,15 @@ fn format_human(results: &[(FunctionToVerify, VerificationResult)]) -> String {
                 reason,
             } => {
                 output.push_str(&format!(
-                    "  ⚠️  Status: PARTIAL ({} of {} verified)\n",
-                    verified, total
+                    "  ⚠️  Status: PARTIAL ({verified} of {total} verified)\n"
                 ));
                 if let Some(r) = reason {
-                    output.push_str(&format!("    Reason: {}\n", r));
+                    output.push_str(&format!("    Reason: {r}\n"));
                 }
             }
             VerificationResult::NoContracts { section } => {
                 output.push_str(&format!(
-                    "  ❌ Status: FAILED (no contracts - section {}; add to Orange Paper or #[requires]/#[ensures])\n",
-                    section
+                    "  ❌ Status: FAILED (no contracts - section {section}; add to Orange Paper or #[requires]/#[ensures])\n"
                 ));
             }
             VerificationResult::NotImplemented => {
@@ -201,14 +199,12 @@ fn format_junit(results: &[(FunctionToVerify, VerificationResult)]) -> String {
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     writeln!(
         &mut xml,
-        "<testsuites name=\"blvm-spec-lock\" tests=\"{}\" failures=\"{}\" time=\"0.0\">",
-        total, failed
+        "<testsuites name=\"blvm-spec-lock\" tests=\"{total}\" failures=\"{failed}\" time=\"0.0\">"
     )
     .unwrap();
     writeln!(
         &mut xml,
-        "  <testsuite name=\"verification\" tests=\"{}\" failures=\"{}\" time=\"0.0\">",
-        total, failed
+        "  <testsuite name=\"verification\" tests=\"{total}\" failures=\"{failed}\" time=\"0.0\">"
     )
     .unwrap();
 
@@ -237,8 +233,7 @@ fn format_junit(results: &[(FunctionToVerify, VerificationResult)]) -> String {
         if let Some(ref section) = func.section {
             write!(
                 &mut xml,
-                "      <properties>\n        <property name=\"section\" value=\"{}\"/>\n      </properties>\n",
-                section
+                "      <properties>\n        <property name=\"section\" value=\"{section}\"/>\n      </properties>\n"
             ).unwrap();
         }
 
@@ -289,9 +284,9 @@ fn format_markdown(results: &[(FunctionToVerify, VerificationResult)]) -> String
 
     md.push_str("## Summary\n\n");
     md.push_str(&format!("- **Total Functions:** {}\n", results.len()));
-    md.push_str(&format!("- **Passed:** {} ✅\n", passed));
+    md.push_str(&format!("- **Passed:** {passed} ✅\n"));
     md.push_str(&format!("- **Failed:** {} ❌\n", failed + no_contracts));
-    md.push_str(&format!("- **Partial:** {} ⚠️\n\n", partial));
+    md.push_str(&format!("- **Partial:** {partial} ⚠️\n\n"));
 
     // Results table
     md.push_str("## Results\n\n");
@@ -315,14 +310,14 @@ fn format_markdown(results: &[(FunctionToVerify, VerificationResult)]) -> String
                 total,
                 reason,
             } => {
-                let mut s = format!("⚠️ Partial ({}/{})", verified, total);
+                let mut s = format!("⚠️ Partial ({verified}/{total})");
                 if let Some(r) = reason {
-                    s.push_str(&format!(": {}", r));
+                    s.push_str(&format!(": {r}"));
                 }
                 s
             }
             VerificationResult::NoContracts { section } => {
-                format!("❌ Failed (no contracts §{})", section)
+                format!("❌ Failed (no contracts §{section})")
             }
             VerificationResult::NotImplemented => "⏳ Not Implemented".to_string(),
         };
@@ -354,13 +349,12 @@ fn format_markdown(results: &[(FunctionToVerify, VerificationResult)]) -> String
             ));
             match result {
                 VerificationResult::Failed { contract, reason } => {
-                    md.push_str(&format!("- **Contract:** {}\n", contract));
-                    md.push_str(&format!("- **Reason:** {}\n\n", reason));
+                    md.push_str(&format!("- **Contract:** {contract}\n"));
+                    md.push_str(&format!("- **Reason:** {reason}\n\n"));
                 }
                 VerificationResult::NoContracts { section } => {
                     md.push_str(&format!(
-                        "- **Reason:** no contracts (section {})\n\n",
-                        section
+                        "- **Reason:** no contracts (section {section})\n\n"
                     ));
                 }
                 _ => {}

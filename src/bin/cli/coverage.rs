@@ -5,7 +5,7 @@
 
 use crate::cli::verify::{discover_functions, FunctionToVerify};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Coverage statistics
 #[derive(Debug, Clone)]
@@ -81,7 +81,7 @@ pub fn format_coverage_human(stats: &CoverageStats) -> String {
     if stats.total_spec_locked > 0 {
         let contract_coverage =
             (stats.with_contracts as f64 / stats.total_spec_locked as f64) * 100.0;
-        output.push_str(&format!("Contract coverage: {:.1}%\n", contract_coverage));
+        output.push_str(&format!("Contract coverage: {contract_coverage:.1}%\n"));
     }
 
     output.push('\n');
@@ -164,7 +164,7 @@ pub fn format_coverage_human(stats: &CoverageStats) -> String {
     if stats.total_spec_locked > 0 {
         let contract_coverage =
             (stats.with_contracts as f64 / stats.total_spec_locked as f64) * 100.0;
-        output.push_str(&format!("  Contract coverage: {:.1}%\n", contract_coverage));
+        output.push_str(&format!("  Contract coverage: {contract_coverage:.1}%\n"));
     }
 
     output
@@ -238,8 +238,7 @@ pub fn format_coverage_markdown(stats: &CoverageStats) -> String {
         let contract_coverage =
             (stats.with_contracts as f64 / stats.total_spec_locked as f64) * 100.0;
         output.push_str(&format!(
-            "- **Contract coverage**: {:.1}%\n",
-            contract_coverage
+            "- **Contract coverage**: {contract_coverage:.1}%\n"
         ));
     }
 
@@ -302,7 +301,7 @@ pub struct SpecSectionCoverage {
 
 /// Generate spec coverage report (theorems → contracts → parseable)
 pub fn generate_spec_coverage_report(
-    _crate_path: &PathBuf,
+    _crate_path: &Path,
     spec_paths: &[PathBuf],
     stats: &CoverageStats,
 ) -> Result<SpecCoverageReport, String> {
@@ -426,7 +425,7 @@ pub fn format_spec_coverage_human(report: &SpecCoverageReport) -> String {
         ));
         if !s.unparseable_examples.is_empty() {
             for ex in &s.unparseable_examples {
-                output.push_str(&format!("  Unparseable: {}\n", ex));
+                output.push_str(&format!("  Unparseable: {ex}\n"));
             }
         }
     }
@@ -476,7 +475,7 @@ pub fn format_spec_coverage_markdown(report: &SpecCoverageReport) -> String {
     } else {
         0.0
     };
-    output.push_str(&format!("| Parseable % | {:.1} |\n\n", pct));
+    output.push_str(&format!("| Parseable % | {pct:.1} |\n\n"));
     output.push_str("## By Section\n\n| Section | Spec | Contracts | Parseable | Impl |\n|---------|------|-----------|-----------|------|\n");
     for s in &report.by_section {
         let spct = if s.contracts_total > 0 {

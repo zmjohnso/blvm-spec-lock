@@ -76,8 +76,8 @@ pub fn detect_drift(
     }
 
     if spec_paths.iter().all(|p| p.exists()) && !spec_paths.is_empty() {
-        let parser = SpecParser::from_paths(&spec_paths)
-            .map_err(|e| format!("Failed to load spec: {}", e))?;
+        let parser =
+            SpecParser::from_paths(&spec_paths).map_err(|e| format!("Failed to load spec: {e}"))?;
 
         for (section_id, section) in parser.iter_sections() {
             for func in &section.functions {

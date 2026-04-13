@@ -230,8 +230,7 @@ impl std::str::FromStr for OutputFormat {
             "junit" => Ok(OutputFormat::Junit),
             "markdown" => Ok(OutputFormat::Markdown),
             _ => Err(format!(
-                "Unknown format: {}. Expected: human, json, junit, markdown",
-                s
+                "Unknown format: {s}. Expected: human, json, junit, markdown"
             )),
         }
     }
@@ -322,7 +321,7 @@ fn handle_check_drift(spec_paths: Vec<PathBuf>, crate_path: PathBuf, format: Out
     let result = match cli::drift::detect_drift(&crate_path, Some(&spec_paths)) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Error detecting drift: {}", e);
+            eprintln!("Error detecting drift: {e}");
             return 1;
         }
     };
@@ -340,7 +339,7 @@ fn handle_check_drift(spec_paths: Vec<PathBuf>, crate_path: PathBuf, format: Out
         }
     };
 
-    print!("{}", output);
+    print!("{output}");
 
     // Return non-zero exit code if drift detected
     if !result.mismatched_contracts.is_empty()
@@ -365,7 +364,7 @@ fn handle_coverage(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: Output
     ) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Error generating coverage: {}", e);
+            eprintln!("Error generating coverage: {e}");
             return 1;
         }
     };
@@ -382,7 +381,7 @@ fn handle_coverage(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: Output
                 }
             },
             Err(e) => {
-                eprintln!("Error generating spec coverage: {}", e);
+                eprintln!("Error generating spec coverage: {e}");
                 return 1;
             }
         }
@@ -398,7 +397,7 @@ fn handle_coverage(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: Output
         }
     };
 
-    print!("{}", output);
+    print!("{output}");
     0
 }
 
@@ -406,7 +405,7 @@ fn handle_list(crate_path: PathBuf, subsystem: Option<String>, section: Option<S
     let all_functions = match cli::verify::discover_functions(&crate_path) {
         Ok(funcs) => funcs,
         Err(e) => {
-            eprintln!("Error discovering functions: {}", e);
+            eprintln!("Error discovering functions: {e}");
             return 1;
         }
     };
@@ -445,7 +444,7 @@ fn handle_summary(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: String)
     let all_functions = match cli::verify::discover_functions(&crate_path) {
         Ok(funcs) => funcs,
         Err(e) => {
-            eprintln!("Error discovering functions: {}", e);
+            eprintln!("Error discovering functions: {e}");
             return 1;
         }
     };
@@ -466,17 +465,14 @@ fn handle_summary(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: String)
     if !spec_paths.is_empty() {
         match cli::spec_enrich::enrich_functions_with_spec(&mut functions, &spec_paths) {
             Ok(n) => enriched_count = n,
-            Err(e) => eprintln!("Warning: Could not parse spec: {}", e),
+            Err(e) => eprintln!("Warning: Could not parse spec: {e}"),
         }
     }
 
     if format == "badge" {
         let n = functions.len();
         let color = if n > 0 { "brightgreen" } else { "lightgrey" };
-        println!(
-            "[![spec-lock](https://img.shields.io/badge/spec--lock-{}%20locked-{})](#)",
-            n, color
-        );
+        println!("[![spec-lock](https://img.shields.io/badge/spec--lock-{n}%20locked-{color})](#)");
         return 0;
     }
 
@@ -498,10 +494,7 @@ fn handle_summary(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: String)
     println!("  Functions: {}", functions.len());
     println!("  Sections: {}", sections.len());
     if !spec_paths.is_empty() {
-        println!(
-            "  Enriched with spec: {} (contracts from Orange Paper)",
-            enriched_count
-        );
+        println!("  Enriched with spec: {enriched_count} (contracts from Orange Paper)");
     } else {
         println!("  Enriched: (use --spec-path for spec-derived contracts)");
     }
@@ -531,7 +524,7 @@ fn handle_verify(args: VerifyArgs) -> i32 {
     let mut all_functions = match cli::verify::discover_functions(&crate_path) {
         Ok(funcs) => funcs,
         Err(e) => {
-            eprintln!("Error discovering functions: {}", e);
+            eprintln!("Error discovering functions: {e}");
             return 1;
         }
     };
@@ -541,17 +534,11 @@ fn handle_verify(args: VerifyArgs) -> i32 {
         match cli::spec_enrich::enrich_functions_with_spec(&mut all_functions, &spec_paths) {
             Ok(enriched) => {
                 if enriched > 0 {
-                    eprintln!(
-                        "📋 Enriched {} functions with spec-derived contracts",
-                        enriched
-                    );
+                    eprintln!("📋 Enriched {enriched} functions with spec-derived contracts");
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "Warning: Could not parse spec for contract extraction: {}",
-                    e
-                );
+                eprintln!("Warning: Could not parse spec for contract extraction: {e}");
                 eprintln!("  Continuing with manual contracts only");
             }
         }
@@ -597,7 +584,7 @@ fn handle_verify(args: VerifyArgs) -> i32 {
     };
 
     let output = cli::output::format_results(&results, format_str);
-    print!("{}", output);
+    print!("{output}");
 
     // Return exit code: 0 if all passed, 1 if any failed or no-contracts (or partial when --strict)
     let has_failures = results
@@ -637,7 +624,7 @@ fn handle_extract_constants(spec_paths: Vec<PathBuf>, output_path: Option<PathBu
     let parser = match parser::orange_paper::SpecParser::from_paths(&spec_paths) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Error parsing Orange Paper: {}", e);
+            eprintln!("Error parsing Orange Paper: {e}");
             return 1;
         }
     };
@@ -737,7 +724,7 @@ fn handle_extract_formulas(spec_paths: Vec<PathBuf>, output_path: Option<PathBuf
     let parser = match parser::orange_paper::SpecParser::from_paths(&spec_paths) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Error parsing Orange Paper: {}", e);
+            eprintln!("Error parsing Orange Paper: {e}");
             return 1;
         }
     };
@@ -845,13 +832,13 @@ fn generate_property_helpers(functions: &[&parser::orange_paper::FunctionSpec]) 
                     .take(100)
                     .collect::<String>()
             };
-            code.push_str(&format!("/// Formula: {}\n", formula_doc));
+            code.push_str(&format!("/// Formula: {formula_doc}\n"));
             code.push_str("/// \n");
             if let Some(desc) = &func.description {
                 let desc_clean = desc.chars().take(200).collect::<String>();
-                code.push_str(&format!("/// {}\n", desc_clean));
+                code.push_str(&format!("/// {desc_clean}\n"));
             }
-            code.push_str(&format!("pub fn {}(", helper_name));
+            code.push_str(&format!("pub fn {helper_name}("));
 
             // Extract parameters from formula
             let params = extract_formula_parameters(formula, &func.name);
@@ -876,8 +863,8 @@ fn generate_property_helpers(functions: &[&parser::orange_paper::FunctionSpec]) 
                 "i64"
             };
 
-            code.push_str(&format!(") -> {} {{\n", return_type));
-            code.push_str(&format!("    {}\n", rust_formula));
+            code.push_str(&format!(") -> {return_type} {{\n"));
+            code.push_str(&format!("    {rust_formula}\n"));
             code.push_str("}\n\n");
         }
     }
@@ -918,8 +905,7 @@ fn translate_formula_to_rust(formula: &str, func_name: &str) -> String {
             .chars()
             .take(80)
             .collect::<String>();
-        format!("    // TODO: Implement formula translation for {}\n    // Formula: {}...\n    // This formula requires manual implementation\n    unimplemented!(\"Formula translation not yet implemented for {}\")", 
-            func_name, formula_clean, func_name)
+        format!("    // TODO: Implement formula translation for {func_name}\n    // Formula: {formula_clean}...\n    // This formula requires manual implementation\n    unimplemented!(\"Formula translation not yet implemented for {func_name}\")")
     }
 }
 
@@ -992,7 +978,7 @@ fn handle_extract_property_tests(
     let parser = match parser::orange_paper::SpecParser::from_paths(&spec_paths) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Error parsing Orange Paper: {}", e);
+            eprintln!("Error parsing Orange Paper: {e}");
             return 1;
         }
     };
@@ -1021,7 +1007,7 @@ fn handle_extract_property_tests(
     let bindings: toml::Value = match toml::from_str(&bindings_content) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("Error parsing bindings TOML: {}", e);
+            eprintln!("Error parsing bindings TOML: {e}");
             return 1;
         }
     };
@@ -1096,12 +1082,11 @@ fn generate_property_tests(
                 "/// Property ({}) - Orange Paper {}\n",
                 prop.name, prop.section_id
             ));
-            code.push_str(&format!("#[test]\nfn {}() {{\n", test_name));
+            code.push_str(&format!("#[test]\nfn {test_name}() {{\n"));
             code.push_str("    proptest!(|((tx, w) in blvm_consensus::test_utils::transaction_with_witness_strategy())| {\n");
-            code.push_str(&format!("        let bytes = {}(&tx, &w);\n", inner_path));
+            code.push_str(&format!("        let bytes = {inner_path}(&tx, &w);\n"));
             code.push_str(&format!(
-                "        let (tx2, w2, _) = {}(&bytes).unwrap();\n",
-                outer_path
+                "        let (tx2, w2, _) = {outer_path}(&bytes).unwrap();\n"
             ));
             code.push_str("        prop_assert_eq!(tx, tx2);\n");
             code.push_str("        prop_assert_eq!(w, w2);\n");
@@ -1112,7 +1097,7 @@ fn generate_property_tests(
                 "/// Property ({}) - Orange Paper {}\n",
                 prop.name, prop.section_id
             ));
-            code.push_str(&format!("#[test]\nfn {}() {{\n", test_name));
+            code.push_str(&format!("#[test]\nfn {test_name}() {{\n"));
             code.push_str(
                 "    proptest!(|(tx in blvm_consensus::test_utils::transaction_strategy())| {\n",
             );
@@ -1128,7 +1113,7 @@ fn generate_property_tests(
                 "/// Property ({}) - Orange Paper {}\n",
                 prop.name, prop.section_id
             ));
-            code.push_str(&format!("#[test]\nfn {}() {{\n", test_name));
+            code.push_str(&format!("#[test]\nfn {test_name}() {{\n"));
             code.push_str("    use blvm_consensus::types::BlockHeader;\n");
             code.push_str("    proptest!(|(v in any::<i64>(), prev in prop::array::uniform32(any::<u8>()), mr in prop::array::uniform32(any::<u8>()), ts in 0u64..u64::MAX, bits in any::<u64>(), nonce in any::<u64>())| {\n");
             code.push_str("        let header = BlockHeader { version: v, prev_block_hash: prev, merkle_root: mr, timestamp: ts, bits, nonce };\n");
