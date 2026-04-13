@@ -223,7 +223,7 @@ impl SpecParser {
     pub fn merge(&mut self, other: SpecParser) -> Result<(), String> {
         for (id, section) in other.sections {
             if self.sections.contains_key(&id) {
-                return Err(format!("Duplicate section ID: {}", id));
+                return Err(format!("Duplicate section ID: {id}"));
             }
             self.sections.insert(id, section);
         }
@@ -242,7 +242,7 @@ impl SpecParser {
                 Ok(p.to_path_buf())
             } else {
                 std::env::current_dir()
-                    .map_err(|e| format!("Failed to get cwd: {}", e))
+                    .map_err(|e| format!("Failed to get cwd: {e}"))
                     .map(|cwd| cwd.join(p))
             }
         };
@@ -252,7 +252,7 @@ impl SpecParser {
         let mut parser = SpecParser::new(content);
         parser
             .parse()
-            .map_err(|e| format!("Failed to parse spec: {}", e))?;
+            .map_err(|e| format!("Failed to parse spec: {e}"))?;
 
         for path in paths.iter().skip(1) {
             let p = resolve(path.as_ref())?;
@@ -276,7 +276,7 @@ impl SpecParser {
         // Split into sections by headers (both ### and ##)
         // Match sections like "6.1", "5.2.1", etc.
         let section_re = Regex::new(r"^##+?\s+(\d+(?:\.\d+)*)\s+(.+)$")
-            .map_err(|e| format!("Regex error: {}", e))?;
+            .map_err(|e| format!("Regex error: {e}"))?;
 
         // Clone content to avoid borrow checker issues
         let content = self.content.clone();
@@ -330,7 +330,7 @@ impl SpecParser {
 
         // Extract functions
         let function_re = Regex::new(r"\*\*(\w+)\*\*:\s*\$?([^\$]+)\$?")
-            .map_err(|e| format!("Regex error: {}", e))?;
+            .map_err(|e| format!("Regex error: {e}"))?;
 
         let mut functions = Vec::new();
 
@@ -356,7 +356,7 @@ impl SpecParser {
             };
 
             // Compute this function's block (from after signature to next function)
-            let func_marker = format!("**{}**", name);
+            let func_marker = format!("**{name}**");
             let block_content: &str = if let Some(func_pos) = content.find(&func_marker) {
                 let start = func_pos + func_marker.len();
                 let remaining = &content[start..];
@@ -433,7 +433,7 @@ impl SpecParser {
         };
         let block = &content[inv_pos..];
         let inv_re = Regex::new(r"(?m)^\d+\.\s*\*\*([^*]+)\*\*:\s*\$([^$]+)\$")
-            .map_err(|e| format!("Regex error: {}", e))?;
+            .map_err(|e| format!("Regex error: {e}"))?;
         let mut properties = Vec::new();
         for cap in inv_re.captures_iter(block) {
             properties.push(Property {
@@ -476,11 +476,11 @@ impl SpecParser {
         // $M_{max} = 21 \times 10^6 \times C$ (maximum money supply, ...)
         let constant_re =
             Regex::new(r"\$([A-Za-z_]+(?:\{[^}]+\})?)\s*=\s*([^$]+)\$\s*(?:\(([^)]+)\))?")
-                .map_err(|e| format!("Regex error: {}", e))?;
+                .map_err(|e| format!("Regex error: {e}"))?;
 
         // Also match lines that might have constants without parentheses
         let _constant_re_alt = Regex::new(r"\$([A-Za-z_]+(?:\{[^}]+\})?)\s*=\s*([^$]+)\$")
-            .map_err(|e| format!("Regex error: {}", e))?;
+            .map_err(|e| format!("Regex error: {e}"))?;
 
         for cap in constant_re.captures_iter(content) {
             let name_raw = cap.get(1).unwrap().as_str();
@@ -492,7 +492,7 @@ impl SpecParser {
                     let desc = m.as_str().to_string();
                     // Fix common issues: add closing paren if missing, clean up
                     if !desc.ends_with(')') && !desc.contains(')') {
-                        format!("{})", desc)
+                        format!("{desc})")
                     } else {
                         desc
                     }
@@ -546,9 +546,8 @@ impl SpecParser {
         let mut properties = Vec::new();
         // Match **Property** (Name): - capture property name
         let property_re = Regex::new(r"\*\*Property\*\*\s*\(([^)]+)\):")
-            .map_err(|e| format!("Regex error: {}", e))?;
-        let formula_re =
-            Regex::new(r"\$\$([^$]+)\$\$").map_err(|e| format!("Regex error: {}", e))?;
+            .map_err(|e| format!("Regex error: {e}"))?;
+        let formula_re = Regex::new(r"\$\$([^$]+)\$\$").map_err(|e| format!("Regex error: {e}"))?;
 
         for cap in property_re.captures_iter(content) {
             let name = cap.get(1).unwrap().as_str().trim().to_string();
@@ -607,56 +606,56 @@ impl SpecParser {
 
         // 1. Handle N * 10^M * C format (e.g., "21*10^6*C") - MOST SPECIFIC
         let mult_exp_c_re =
-            Regex::new(r"^(\d+)\*10\^(\d+)\*C$").map_err(|e| format!("Regex error: {}", e))?;
+            Regex::new(r"^(\d+)\*10\^(\d+)\*C$").map_err(|e| format!("Regex error: {e}"))?;
         if let Some(captures) = mult_exp_c_re.captures(&cleaned) {
             let base: u64 = captures
                 .get(1)
                 .unwrap()
                 .as_str()
                 .parse()
-                .map_err(|_| format!("Invalid base: {}", value))?;
+                .map_err(|_| format!("Invalid base: {value}"))?;
             let exponent: u32 = captures
                 .get(2)
                 .unwrap()
                 .as_str()
                 .parse()
-                .map_err(|_| format!("Invalid exponent: {}", value))?;
+                .map_err(|_| format!("Invalid exponent: {value}"))?;
             let multiplier = base * 10u64.pow(exponent);
             let formatted = self.format_number_with_underscores(multiplier);
             // C is u64, so we need to cast for i64 result
-            return Ok(("i64".to_string(), format!("({} * C) as i64", formatted)));
+            return Ok(("i64".to_string(), format!("({formatted} * C) as i64")));
         }
 
         // 2. Handle N * 10^M format (without C) - SECOND MOST SPECIFIC
         let mult_exp_re =
-            Regex::new(r"^(\d+)\*10\^(\d+)$").map_err(|e| format!("Regex error: {}", e))?;
+            Regex::new(r"^(\d+)\*10\^(\d+)$").map_err(|e| format!("Regex error: {e}"))?;
         if let Some(captures) = mult_exp_re.captures(&cleaned) {
             let base: u64 = captures
                 .get(1)
                 .unwrap()
                 .as_str()
                 .parse()
-                .map_err(|_| format!("Invalid base: {}", value))?;
+                .map_err(|_| format!("Invalid base: {value}"))?;
             let exponent: u32 = captures
                 .get(2)
                 .unwrap()
                 .as_str()
                 .parse()
-                .map_err(|_| format!("Invalid exponent: {}", value))?;
+                .map_err(|_| format!("Invalid exponent: {value}"))?;
             let result = base * 10u64.pow(exponent);
             let formatted = self.format_number_with_underscores(result);
             return Ok(("u64".to_string(), formatted));
         }
 
         // 3. Handle 10^N format - THIRD
-        let exp_re = Regex::new(r"^10\^(\d+)$").map_err(|e| format!("Regex error: {}", e))?;
+        let exp_re = Regex::new(r"^10\^(\d+)$").map_err(|e| format!("Regex error: {e}"))?;
         if let Some(captures) = exp_re.captures(&cleaned) {
             let exponent: u32 = captures
                 .get(1)
                 .unwrap()
                 .as_str()
                 .parse()
-                .map_err(|_| format!("Invalid exponent: {}", value))?;
+                .map_err(|_| format!("Invalid exponent: {value}"))?;
             let result = 10u64.pow(exponent);
             let formatted = self.format_number_with_underscores(result);
             return Ok(("u64".to_string(), formatted));
@@ -670,7 +669,7 @@ impl SpecParser {
             return Ok(("u64".to_string(), formatted));
         }
 
-        Err(format!("Could not parse constant value: {}", value))
+        Err(format!("Could not parse constant value: {value}"))
     }
 
     /// Format number with underscores for readability (e.g., 210000 -> 210_000)
@@ -728,7 +727,7 @@ impl SpecParser {
     ) -> Result<(), String> {
         // Look for properties list - match "- PropertyName:" or "- **PropertyName**:"
         let property_re = Regex::new(r"(?m)^\s*-\s*(?:\*\*)?([^:*]+)(?:\*\*)?:\s*(.+)$")
-            .map_err(|e| format!("Regex error: {}", e))?;
+            .map_err(|e| format!("Regex error: {e}"))?;
 
         // Look for "**Properties**:" header (exact - not **Properties** (Updated):)
         // Also try "**Properties**:" with optional space before colon (spec format variation)
@@ -777,11 +776,10 @@ impl SpecParser {
         // Match: **Theorem X.Y.Z** (Name)
         // Use simple, reliable regex
         let theorem_re = Regex::new(r"\*\*Theorem\s+([\d.]+)\*\*[^(]*\(([^)]+)\)")
-            .map_err(|e| format!("Regex error: {}", e))?;
+            .map_err(|e| format!("Regex error: {e}"))?;
         let latex_block_re =
-            Regex::new(r"\$\$([^$]+)\$\$").map_err(|e| format!("Regex error: {}", e))?;
-        let inline_math_re =
-            Regex::new(r"\$([^$]+)\$").map_err(|e| format!("Regex error: {}", e))?;
+            Regex::new(r"\$\$([^$]+)\$\$").map_err(|e| format!("Regex error: {e}"))?;
+        let inline_math_re = Regex::new(r"\$([^$]+)\$").map_err(|e| format!("Regex error: {e}"))?;
 
         for cap in theorem_re.captures_iter(content) {
             let number = cap.get(1).unwrap().as_str().to_string();
@@ -828,7 +826,7 @@ impl SpecParser {
 
             // Fallback if still empty
             if statement.is_empty() {
-                statement = format!("See Orange Paper Theorem {} for full statement", number);
+                statement = format!("See Orange Paper Theorem {number} for full statement");
             }
 
             // Look for proof reference
@@ -859,7 +857,7 @@ impl SpecParser {
     ) -> Result<(), String> {
         // Look for LaTeX formula: $$\text{FunctionName}(...) = ...$$
         // Use string search instead of regex to avoid escape issues
-        let latex_func = format!(r"\text{{{}}}", func_name);
+        let latex_func = format!(r"\text{{{func_name}}}");
         let latex_func_alt = func_name.to_string(); // Also match without \text{}
 
         // Find formula blocks (between $$)
@@ -1015,10 +1013,10 @@ impl SpecParser {
 
         // Replace LaTeX function calls - handle escaped backslashes properly
         // First replace LaTeX \text{FunctionName} format (literal backslash + text)
-        let latex_pattern = format!(r"\text{{{}}}", func_name);
+        let latex_pattern = format!(r"\text{{{func_name}}}");
         rust_expr = rust_expr.replace(&latex_pattern, "result");
         // Also handle escaped version
-        let latex_pattern_escaped = format!(r"\\text{{{}}}", func_name);
+        let latex_pattern_escaped = format!(r"\\text{{{func_name}}}");
         rust_expr = rust_expr.replace(&latex_pattern_escaped, "result");
         // Then replace plain function name (but not if it's part of a larger word)
         rust_expr = rust_expr.replace(func_name, "result");
@@ -1149,8 +1147,8 @@ impl SpecParser {
         let func_name_variations = [
             func_name_lower.clone(),
             func_name.to_string(),
-            format!("\\text{{{}}}", func_name),
-            format!("\\text{{{}}}", func_name_lower),
+            format!("\\text{{{func_name}}}"),
+            format!("\\text{{{func_name_lower}}}"),
         ];
 
         for (section_id, section) in &self.sections {

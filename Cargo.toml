@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Bitcoin Commons Team"]
 description = "BLVM Spec Lock: Purpose-built formal verification tool for Bitcoin Commons"
 license = "MIT"
-repository = "https://github.com/BTCDecoded/blvm-consensus"
+repository = "https://github.com/BTCDecoded/blvm-spec-lock"
 homepage = "https://btcdecoded.org"
 rust-version = "1.83"
 

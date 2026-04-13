@@ -9,7 +9,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use regex::Regex;
 use std::path::PathBuf;
-use syn::{parse::Parse, parse_macro_input, Ident, LitStr, Token};
+use syn::{parse::Parse, Ident, LitStr, Token};
 
 /// Arguments for #[spec_locked] attribute
 ///
@@ -123,8 +123,7 @@ impl Parse for SpecLockedArgs {
                 spec_path = Some(value);
             } else {
                 return Err(input.error(format!(
-                    "Unknown parameter: {}. Expected 'section', 'function', or 'spec_path'",
-                    key
+                    "Unknown parameter: {key}. Expected 'section', 'function', or 'spec_path'"
                 )));
             }
 
@@ -261,7 +260,7 @@ fn generate_ensures(spec: &FunctionSpec, func: &syn::ItemFn) -> TokenStream {
                     let comment_str = contract
                         .comment
                         .as_ref()
-                        .map(|c| format!(" // {}", c))
+                        .map(|c| format!(" // {c}"))
                         .unwrap_or_else(String::new);
                     let comment_tokens: TokenStream = if comment_str.is_empty() {
                         TokenStream::new()
@@ -298,7 +297,8 @@ fn generate_ensures(spec: &FunctionSpec, func: &syn::ItemFn) -> TokenStream {
                 let rust_expr =
                     translate_math_to_rust_contract(&property.statement, &spec.name, func);
 
-                let comment_str = format!(" // {}", property.name);
+                let name = &property.name;
+                let comment_str = format!(" // {name}");
                 let comment_tokens: TokenStream = comment_str.parse().unwrap_or_default();
 
                 ensures.push(quote! {
@@ -320,7 +320,11 @@ fn generate_ensures(spec: &FunctionSpec, func: &syn::ItemFn) -> TokenStream {
         // Translate theorem statement to Rust contract
         let rust_expr = translate_math_to_rust_contract(&theorem.statement, &spec.name, func);
 
-        let comment_str = format!(" // Theorem {}: {}", theorem.number, theorem.name);
+        let comment_str = format!(
+            " // Theorem {n}: {name}",
+            n = theorem.number.as_str(),
+            name = theorem.name.as_str()
+        );
         let comment_tokens: TokenStream = comment_str.parse().unwrap_or_default();
 
         ensures.push(quote! {
@@ -437,7 +441,7 @@ pub fn process_spec_locked(
         vec![PathBuf::from(p.value())]
     } else if let Ok(env_val) = std::env::var("SPEC_LOCK_SPEC_PATH") {
         env_val
-            .split(|c| c == ',' || c == ':')
+            .split([',', ':'])
             .map(|s| PathBuf::from(s.trim()))
             .filter(|p| !p.as_os_str().is_empty())
             .collect::<Vec<_>>()
@@ -454,8 +458,7 @@ pub fn process_spec_locked(
             vec![umbrella]
         } else {
             let error_msg = format!(
-                "No Orange Paper spec found. Expected blvm-spec/PROTOCOL.md+ARCHITECTURE.md or blvm-spec/THE_ORANGE_PAPER.md (relative to {})",
-                manifest_dir
+                "No Orange Paper spec found. Expected blvm-spec/PROTOCOL.md+ARCHITECTURE.md or blvm-spec/THE_ORANGE_PAPER.md (relative to {manifest_dir})"
             );
             return proc_macro::TokenStream::from(quote! {
                 compile_error!(#error_msg);
@@ -476,7 +479,7 @@ pub fn process_spec_locked(
     let parser = match SpecParser::from_paths(&spec_paths) {
         Ok(p) => p,
         Err(e) => {
-            let error_msg = format!("Failed to parse Orange Paper: {}", e);
+            let error_msg = format!("Failed to parse Orange Paper: {e}");
             return proc_macro::TokenStream::from(quote! {
                 compile_error!(#error_msg);
                 #func
@@ -610,7 +613,7 @@ pub fn process_spec_locked(
                                         section: "auto-inferred".to_string(),
                                         signature: None,
                                         formula: None,
-                                        description: Some(format!("Function '{}' auto-inferred (not yet in Orange Paper - migration mode)", func_name)),
+                                        description: Some(format!("Function '{func_name}' auto-inferred (not yet in Orange Paper - migration mode)")),
                                         conditions: vec![],
                                         theorems: vec![],
                                         contracts: vec![],
@@ -723,8 +726,7 @@ pub fn process_spec_locked(
                     signature: None,
                     formula: None,
                     description: Some(format!(
-                        "Referenced in section {} (theorem/formula)",
-                        section_str
+                        "Referenced in section {section_str} (theorem/formula)"
                     )),
                     conditions: vec![],
                     theorems: vec![],
@@ -751,8 +753,9 @@ pub fn process_spec_locked(
                     section: section_str.to_string(),
                     signature: None,
                     formula: None,
-                    description: Some(format!("Function '{}' referenced but not yet in spec section {} (Migration mode). Available: {}", 
-                                       func_name, section_str, available_str)),
+                    description: Some(format!(
+                        "Function '{func_name}' referenced but not yet in spec section {section_str} (Migration mode). Available: {available_str}"
+                    )),
                     properties: vec![],
                     content: section.content.clone(),
                     conditions: vec![],
@@ -898,7 +901,7 @@ fn translate_math_to_rust_contract(
     if param_names.len() == 1 {
         let param_name = &param_names[0];
         // Simple heuristic: if math uses single letter, map to first parameter
-        translated = translated.replace("h", &format!("*{}", param_name));
+        translated = translated.replace("h", &format!("*{param_name}"));
     } else {
         // Multi-parameter: try to match common patterns
         translated = translated.replace("h", "*height");

@@ -2,6 +2,7 @@
 //!
 //! Discovers functions, extracts contracts, and runs verification
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use syn::{Attribute, File, ImplItem, ImplItemFn, ItemFn};
 use walkdir::WalkDir;
@@ -312,7 +313,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
     let mut verified_count = 0;
     let mut failed_contracts = Vec::new();
     let mut requires_z3_count = 0;
-    let mut translation_error: Option<String> = None;
+    let translation_error = RefCell::new(None::<String>);
 
     // Separate requires and ensures contracts
     let requires_contracts: Vec<_> = function
@@ -418,8 +419,9 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                         Err(e) => {
                             if e.contains("Could not translate body") {
                                 requires_z3_count += 1;
-                                if translation_error.is_none() {
-                                    translation_error = Some(e);
+                                let mut slot = translation_error.borrow_mut();
+                                if slot.is_none() {
+                                    *slot = Some(e);
                                 }
                             } else {
                                 failed_contracts.push((
@@ -513,6 +515,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                 verified_count,
                 function.contracts.len(),
                 translation_error
+                    .into_inner()
                     .as_deref()
                     .unwrap_or("Build with --features z3 for full verification.")
             ),

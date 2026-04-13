@@ -46,7 +46,7 @@ impl Lexer {
     }
 
     fn skip_whitespace(&mut self) {
-        while self.peek().map_or(false, |c| c.is_whitespace()) {
+        while self.peek().is_some_and(|c| c.is_whitespace()) {
             self.advance();
         }
     }

@@ -44,7 +44,7 @@ fn resolve_spec_paths(spec_paths: Vec<PathBuf>) -> Vec<PathBuf> {
     }
     if let Ok(env_val) = std::env::var("SPEC_LOCK_SPEC_PATH") {
         return env_val
-            .split(|c| c == ',' || c == ':')
+            .split([',', ':'])
             .map(|s| PathBuf::from(s.trim()))
             .filter(|p| !p.as_os_str().is_empty())
             .collect();
@@ -207,6 +207,19 @@ enum OutputFormat {
     Markdown,
 }
 
+/// Arguments for `verify` subcommand (keeps `handle_verify` arity small for clippy).
+struct VerifyArgs {
+    crate_path: PathBuf,
+    files: Vec<String>,
+    subsystem: Option<String>,
+    name: Option<String>,
+    sections: Vec<String>,
+    format: OutputFormat,
+    strict: bool,
+    spec_paths: Vec<PathBuf>,
+    timeout_secs: u64,
+}
+
 impl std::str::FromStr for OutputFormat {
     type Err = String;
 
@@ -240,17 +253,17 @@ fn main() {
             verbose: _,
             strict,
             spec_path,
-        } => handle_verify(
-            resolve_crate_path(crate_path),
+        } => handle_verify(VerifyArgs {
+            crate_path: resolve_crate_path(crate_path),
             files,
             subsystem,
             name,
-            section,
+            sections: section,
             format,
             strict,
-            resolve_spec_paths(spec_path),
-            timeout,
-        ),
+            spec_paths: resolve_spec_paths(spec_path),
+            timeout_secs: timeout,
+        }),
         Commands::Coverage {
             crate_path,
             spec_path,
@@ -501,17 +514,19 @@ fn handle_summary(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: String)
     0
 }
 
-fn handle_verify(
-    crate_path: PathBuf,
-    _files: Vec<String>,
-    subsystem: Option<String>,
-    name: Option<String>,
-    sections: Vec<String>,
-    format: OutputFormat,
-    strict: bool,
-    spec_paths: Vec<PathBuf>,
-    timeout_secs: u64,
-) -> i32 {
+fn handle_verify(args: VerifyArgs) -> i32 {
+    let VerifyArgs {
+        crate_path,
+        files: _files,
+        subsystem,
+        name,
+        sections,
+        format,
+        strict,
+        spec_paths,
+        timeout_secs,
+    } = args;
+
     // Discover functions from explicit crate path
     let mut all_functions = match cli::verify::discover_functions(&crate_path) {
         Ok(funcs) => funcs,

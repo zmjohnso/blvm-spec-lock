@@ -14,7 +14,7 @@ fn classify_noise(cond: &str) -> Option<&'static str> {
         return Some("noise");
     }
     // "227,836)", "363,724)" - constant fragments
-    if Regex::new(r"^\d[\d,]*\)\s*$").map_or(false, |re| re.is_match(c)) {
+    if Regex::new(r"^\d[\d,]*\)\s*$").is_ok_and(|re| re.is_match(c)) {
         return Some("noise");
     }
     // "227,836; testnet: 211,111; regtest: 0)" - activation height list
@@ -22,7 +22,7 @@ fn classify_noise(cond: &str) -> Option<&'static str> {
         return Some("noise");
     }
     // Bare activation constant fragments: "363,724; testnet: 330,776; regtest: 0)"
-    if Regex::new(r"^\d[\d,]*;\s*testnet:").map_or(false, |re| re.is_match(c)) {
+    if Regex::new(r"^\d[\d,]*;\s*testnet:").is_ok_and(|re| re.is_match(c)) {
         return Some("noise");
     }
     // URLs and reference fragments: "//www.itu.int/rec/..."
@@ -39,7 +39,7 @@ fn classify_noise(cond: &str) -> Option<&'static str> {
 /// Parse "result(args1) == result(args2)" for determinism. Returns true if pattern matches.
 pub fn is_result_equality(cond: &str) -> bool {
     let re = Regex::new(r"result\s*\([^)]*\)\s*(?:==|\\iff)\s*result\s*\([^)]*\)").ok();
-    re.map_or(false, |r| r.is_match(cond))
+    re.is_some_and(|r| r.is_match(cond))
 }
 
 /// Known enum mappings: spec name -> integer value (e.g. SighashType)
@@ -83,10 +83,10 @@ fn parse_enum_membership(core: &str) -> Option<String> {
     }
     let disj = values
         .iter()
-        .map(|v| format!("result == {}", v))
+        .map(|v| format!("result == {v}"))
         .collect::<Vec<_>>()
         .join(" || ");
-    Some(format!("({})", disj))
+    Some(format!("({disj})"))
 }
 
 /// Extract parseable Rust expression from spec-derived condition.
@@ -210,20 +210,18 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         if let Ok(n) = cap.get(1).unwrap().as_str().parse::<u32>() {
             if n <= 64 {
                 let max_val = 1u64 << n;
-                return Some(format!("result >= 0 && result < {}", max_val));
+                return Some(format!("result >= 0 && result < {max_val}"));
             }
         }
     }
     // "extracts bit N" → Bool form (type/disable flags return bool)
-    if Regex::new(r"extracts bit \d+").map_or(false, |re| re.is_match(&cond)) {
+    if Regex::new(r"extracts bit \d+").is_ok_and(|re| re.is_match(&cond)) {
         return Some("(result == true || result == false)".to_string());
     }
 
     // \in \mathbb{N} → result >= 0
-    if cond.contains(r"\in \mathbb{N}") || cond.contains("∈ ℕ") {
-        if cond.contains("result") {
-            return Some("result >= 0".to_string());
-        }
+    if (cond.contains(r"\in \mathbb{N}") || cond.contains("∈ ℕ")) && cond.contains("result") {
+        return Some("result >= 0".to_string());
     }
     // \in \mathbb{Z} or \in \mathbb{S} → true (any int / script type)
     if cond.contains(r"\in \mathbb{Z}") || cond.contains(r"\in \mathbb{S}") {
@@ -231,7 +229,7 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     }
 
     // Option type: \in {Some(...), None}
-    if Regex::new(r"\\in\s*\{\s*Some[^}]*,\s*None\s*\}").map_or(false, |re| re.is_match(&cond)) {
+    if Regex::new(r"\\in\s*\{\s*Some[^}]*,\s*None\s*\}").is_ok_and(|re| re.is_match(&cond)) {
         return Some("true".to_string()); // Option is always Some or None
     }
 
@@ -243,7 +241,7 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
             if let Some(var) = before.split_whitespace().last() {
                 let var = var.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
                 if !var.is_empty() && var.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    return Some(format!("{} >= 0 && {} <= 1", var, var));
+                    return Some(format!("{var} >= 0 && {var} <= 1"));
                 }
             }
         }
@@ -333,7 +331,7 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     let in_valid_invalid = Regex::new(r"\\in\s*\{[^}]*valid[^}]*invalid[^}]*\}").ok();
     if in_valid_invalid
         .as_ref()
-        .map_or(false, |re| re.is_match(core))
+        .is_some_and(|re| re.is_match(core))
     {
         let core_before = core.split(" \\in ").next().unwrap_or(core);
         if core_before.contains("result") {
@@ -349,7 +347,7 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     let in_accepted_rejected = Regex::new(r"\\in\s*\{[^}]*accepted[^}]*rejected[^}]*\}").ok();
     if in_accepted_rejected
         .as_ref()
-        .map_or(false, |re| re.is_match(core))
+        .is_some_and(|re| re.is_match(core))
     {
         let core_before = core.split(" \\in ").next().unwrap_or(core);
         if core_before.contains("result") {
@@ -363,7 +361,7 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         }
     }
     let in_true_false = Regex::new(r"\\in\s*\{[^}]*true[^}]*false[^}]*\}").ok();
-    if in_true_false.as_ref().map_or(false, |re| re.is_match(core)) {
+    if in_true_false.as_ref().is_some_and(|re| re.is_match(core)) {
         let core_before = core.split(" \\in ").next().unwrap_or(core);
         if core_before.contains("result") {
             // Handle nested parens: result(a, (b, c)) - use replace_all with greedy match
@@ -382,8 +380,7 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         }
     }
     // {success, failure} → Bool-like
-    if Regex::new(r"\\in\s*\{[^}]*success[^}]*failure[^}]*\}").map_or(false, |re| re.is_match(core))
-    {
+    if Regex::new(r"\\in\s*\{[^}]*success[^}]*failure[^}]*\}").is_ok_and(|re| re.is_match(core)) {
         let core_before = core.split(" \\in ").next().unwrap_or(core);
         if core_before.contains("result") {
             return Some("(result == true || result == false)".to_string());
@@ -425,10 +422,12 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         return Some("true".to_string());
     }
     // Fallback: result(...) \in {true, false} with nested parens - use simpler match
-    if core.contains("result") && (core.contains(r"\in {true") || core.contains(r"\in { true")) {
-        if core.contains("false") && core.contains('}') {
-            return Some("(result == true || result == false)".to_string());
-        }
+    if core.contains("result")
+        && (core.contains(r"\in {true") || core.contains(r"\in { true"))
+        && core.contains("false")
+        && core.contains('}')
+    {
+        return Some("(result == true || result == false)".to_string());
     }
 
     let mut lexer = lexer::Lexer::new(&core);

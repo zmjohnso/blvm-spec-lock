@@ -622,22 +622,20 @@ impl Z3Translator {
             }
             "with" => {
                 // thread_local.with(|cell| block) - translate closure body
-                if let Some(arg) = method.args.first() {
-                    if let Expr::Closure(closure) = arg {
-                        if closure.inputs.len() == 1 {
-                            if let syn::Pat::Ident(ident) = &closure.inputs[0] {
-                                let param = ident.ident.to_string();
-                                let fresh = format!("with_{}", param);
-                                let new_var = Int::new_const(&self.ctx, z3::Symbol::String(fresh));
-                                let old = vars.insert(param.clone(), new_var.into());
-                                let result = self.translate_expr_with_vars(&closure.body, vars);
-                                if let Some(prev) = old {
-                                    vars.insert(param, prev);
-                                } else {
-                                    vars.remove(&param);
-                                }
-                                return result;
+                if let Some(Expr::Closure(closure)) = method.args.first() {
+                    if closure.inputs.len() == 1 {
+                        if let syn::Pat::Ident(ident) = &closure.inputs[0] {
+                            let param = ident.ident.to_string();
+                            let fresh = format!("with_{param}");
+                            let new_var = Int::new_const(&self.ctx, z3::Symbol::String(fresh));
+                            let old = vars.insert(param.clone(), new_var.into());
+                            let result = self.translate_expr_with_vars(&closure.body, vars);
+                            if let Some(prev) = old {
+                                vars.insert(param, prev);
+                            } else {
+                                vars.remove(&param);
                             }
+                            return result;
                         }
                     }
                 }
@@ -680,7 +678,7 @@ impl Z3Translator {
                     let int_sort = Sort::int(&self.ctx);
                     let fn_decl =
                         z3::FuncDecl::new(&self.ctx, "sha256_digest", &[&int_sort], &int_sort);
-                    return Ok(fn_decl.apply(&[&data_int]).into());
+                    return Ok(fn_decl.apply(&[&data_int]));
                 }
                 let _ = self.translate_expr_with_vars(&method.receiver, vars);
                 let base = expr_to_var_hint(&method.receiver);
@@ -702,7 +700,7 @@ impl Z3Translator {
                 })?;
                 let int_sort = Sort::int(&self.ctx);
                 let fn_decl = z3::FuncDecl::new(&self.ctx, "hash256", &[&int_sort], &int_sort);
-                Ok(fn_decl.apply(&[&data_int]).into())
+                Ok(fn_decl.apply(&[&data_int]))
             }
             "into" => self.translate_expr_with_vars(&method.receiver, vars),
             "clone" | "serialize" => {
@@ -715,25 +713,22 @@ impl Z3Translator {
             }
             "map" => {
                 // option.map(|x| f(x)) - use closure body or pass through
-                if let Some(arg) = method.args.first() {
-                    if let Expr::Closure(closure) = arg {
-                        if closure.inputs.len() == 1 {
-                            if let syn::Pat::Ident(ident) = &closure.inputs[0] {
-                                let param = ident.ident.to_string();
-                                let _recv =
-                                    self.translate_expr_with_vars(&method.receiver, vars)?;
-                                let fresh = format!("map_{}", param);
-                                let new_var = Int::new_const(&self.ctx, z3::Symbol::String(fresh));
-                                let old = vars.insert(param.clone(), new_var.into());
-                                let result = self.translate_expr_with_vars(&closure.body, vars);
-                                if let Some(prev) = old {
-                                    vars.insert(param, prev);
-                                } else {
-                                    vars.remove(&param);
-                                }
-                                if let Ok(r) = result {
-                                    return Ok(r);
-                                }
+                if let Some(Expr::Closure(closure)) = method.args.first() {
+                    if closure.inputs.len() == 1 {
+                        if let syn::Pat::Ident(ident) = &closure.inputs[0] {
+                            let param = ident.ident.to_string();
+                            let _recv = self.translate_expr_with_vars(&method.receiver, vars)?;
+                            let fresh = format!("map_{param}");
+                            let new_var = Int::new_const(&self.ctx, z3::Symbol::String(fresh));
+                            let old = vars.insert(param.clone(), new_var.into());
+                            let result = self.translate_expr_with_vars(&closure.body, vars);
+                            if let Some(prev) = old {
+                                vars.insert(param, prev);
+                            } else {
+                                vars.remove(&param);
+                            }
+                            if let Ok(r) = result {
+                                return Ok(r);
                             }
                         }
                     }
@@ -867,7 +862,7 @@ impl Z3Translator {
                 })?;
                 let int_sort = Sort::int(&self.ctx);
                 let fn_decl = z3::FuncDecl::new(&self.ctx, "to_le_bytes", &[&int_sort], &int_sort);
-                Ok(fn_decl.apply(&[&recv_int]).into())
+                Ok(fn_decl.apply(&[&recv_int]))
             }
             "is_some" | "is_none" => {
                 // Option checks: return Bool. Use fresh var for unknown Option; name from receiver.
@@ -957,7 +952,7 @@ impl Z3Translator {
                 let symbol = z3::Symbol::String("result".to_string());
                 Int::new_const(&self.ctx, symbol).into()
             });
-            return Ok(var.clone().into());
+            return Ok(var.clone());
         }
         // Ok(expr) / Some(expr): result is the inner value (for Result<T,E> / Option<T> returns)
         if (base == "Ok" || base == "Some") && call.args.len() == 1 {
@@ -1008,7 +1003,7 @@ impl Z3Translator {
             }
             let int_sort = Sort::int(&self.ctx);
             let bool_sort = Sort::bool(&self.ctx);
-            let sorts: Vec<&z3::Sort> = std::iter::repeat(&int_sort).take(arity).collect();
+            let sorts: Vec<&z3::Sort> = std::iter::repeat_n(&int_sort, arity).collect();
             let z3_fn_name = if arity_opt.is_some() {
                 format!("{}_b", fn_name)
             } else {
@@ -1022,7 +1017,7 @@ impl Z3Translator {
             );
             let arg_refs: Vec<&dyn Ast> = arg_asts.iter().map(|a| a as &dyn Ast).collect();
             let result = fn_decl.apply(&arg_refs);
-            return Ok(result.into());
+            return Ok(result);
         }
         // Uninterpreted functions for determinism: f(args) so that same inputs => same output
         if let Some((fn_name, arity_opt)) = known_uninterpreted_function(&name) {
@@ -1052,7 +1047,7 @@ impl Z3Translator {
                 }
             }
             let int_sort = Sort::int(&self.ctx);
-            let sorts: Vec<&z3::Sort> = std::iter::repeat(&int_sort).take(arity).collect();
+            let sorts: Vec<&z3::Sort> = std::iter::repeat_n(&int_sort, arity).collect();
             let z3_fn_name = if arity_opt.is_some() {
                 fn_name.to_string()
             } else {
@@ -1066,7 +1061,7 @@ impl Z3Translator {
             );
             let arg_refs: Vec<&dyn Ast> = arg_asts.iter().map(|a| a as &dyn Ast).collect();
             let result = fn_decl.apply(&arg_refs);
-            return Ok(result.into());
+            return Ok(result);
         }
         if let Some(fresh_name) = known_int_returning_function(&name) {
             // Translate args (for variable binding; we don't model the relation yet)
@@ -1111,7 +1106,7 @@ impl Z3Translator {
         let base = name.split("::").last().unwrap_or(&name);
         let z3_fn_name = format!("call_{}_{}", base.replace("::", "_"), arity);
         let int_sort = Sort::int(&self.ctx);
-        let sorts: Vec<&z3::Sort> = std::iter::repeat(&int_sort).take(arity).collect();
+        let sorts: Vec<&z3::Sort> = std::iter::repeat_n(&int_sort, arity).collect();
         let fn_decl = z3::FuncDecl::new(
             &self.ctx,
             z3::Symbol::String(z3_fn_name),
@@ -1119,7 +1114,7 @@ impl Z3Translator {
             &int_sort,
         );
         let arg_refs: Vec<&dyn Ast> = arg_asts.iter().map(|a| a as &dyn Ast).collect();
-        Ok(fn_decl.apply(&arg_refs).into())
+        Ok(fn_decl.apply(&arg_refs))
     }
 
     /// Translate match expr { Some(x) => a, None => b } or { Ok(v) => a, Err(_) => b }
@@ -1711,7 +1706,7 @@ impl Z3Translator {
         })?;
 
         let then_z3 = match if_expr.then_branch.stmts.last() {
-            Some(Stmt::Expr(expr, None)) => self.translate_expr_with_vars(&expr, vars)?,
+            Some(Stmt::Expr(expr, None)) => self.translate_expr_with_vars(expr, vars)?,
             _ => {
                 return Err(TranslationError::UnsupportedExpression(
                     "If then branch: expected single expression".to_string(),
@@ -1723,7 +1718,7 @@ impl Z3Translator {
             match &**else_branch {
                 Expr::Block(block) => {
                     if let Some(Stmt::Expr(expr, None)) = block.block.stmts.last() {
-                        self.translate_expr_with_vars(&expr, vars)?
+                        self.translate_expr_with_vars(expr, vars)?
                     } else {
                         return Err(TranslationError::UnsupportedExpression(
                             "If else block: expected single expression".to_string(),
@@ -1776,26 +1771,23 @@ fn resolve_constant(name: &str) -> Option<i64> {
 /// Check if return type is Result<T> or Option<Result<T>>.
 /// For determinism, we use Int for result: 0=Err/None, 1=Ok(false)/Some(Err), 2=Ok(true)/Some(Ok(false)), 3=Some(Ok(true)).
 pub fn returns_result_or_option_result(ty: &syn::Type) -> bool {
-    match ty {
-        syn::Type::Path(p) => {
-            if let Some(seg) = p.path.segments.last() {
-                if seg.ident == "Result" {
-                    return true;
-                }
-                if seg.ident == "Option" {
-                    if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                        for arg in &args.args {
-                            if let syn::GenericArgument::Type(t) = arg {
-                                if returns_result_or_option_result(t) {
-                                    return true;
-                                }
+    if let syn::Type::Path(p) = ty {
+        if let Some(seg) = p.path.segments.last() {
+            if seg.ident == "Result" {
+                return true;
+            }
+            if seg.ident == "Option" {
+                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                    for arg in &args.args {
+                        if let syn::GenericArgument::Type(t) = arg {
+                            if returns_result_or_option_result(t) {
+                                return true;
                             }
                         }
                     }
                 }
             }
         }
-        _ => {}
     }
     false
 }
@@ -1803,26 +1795,23 @@ pub fn returns_result_or_option_result(ty: &syn::Type) -> bool {
 /// Check if a type is bool or wraps bool (Result<bool>, Option<bool>).
 /// Used to create result as Bool in Z3 instead of Int.
 pub fn returns_bool_like(ty: &syn::Type) -> bool {
-    match ty {
-        syn::Type::Path(p) => {
-            if let Some(seg) = p.path.segments.last() {
-                if seg.ident == "bool" {
-                    return true;
-                }
-                if seg.ident == "Result" || seg.ident == "Option" {
-                    if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                        for arg in &args.args {
-                            if let syn::GenericArgument::Type(t) = arg {
-                                if returns_bool_like(t) {
-                                    return true;
-                                }
+    if let syn::Type::Path(p) = ty {
+        if let Some(seg) = p.path.segments.last() {
+            if seg.ident == "bool" {
+                return true;
+            }
+            if seg.ident == "Result" || seg.ident == "Option" {
+                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                    for arg in &args.args {
+                        if let syn::GenericArgument::Type(t) = arg {
+                            if returns_bool_like(t) {
+                                return true;
                             }
                         }
                     }
                 }
             }
         }
-        _ => {}
     }
     false
 }

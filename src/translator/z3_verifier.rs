@@ -164,7 +164,7 @@ impl Z3Verifier {
 
                 // Initialize result: Bool for bool/Result<bool>/Option<bool>, Int otherwise
                 let result_symbol = z3::Symbol::String("result".to_string());
-                let result_var = if return_type.as_ref().map_or(false, returns_bool_like) {
+                let result_var = if return_type.as_ref().is_some_and(returns_bool_like) {
                     z3::ast::Bool::new_const(ctx, result_symbol).into()
                 } else {
                     z3::ast::Int::new_const(ctx, result_symbol).into()
@@ -248,7 +248,7 @@ impl Z3Verifier {
         let mut vars1 = Z3VarMap::new();
         let mut vars2 = Z3VarMap::new();
 
-        for (name, _ty) in &param_types {
+        for name in param_types.keys() {
             let sym1 = z3::Symbol::String(format!("{}{}", prefix1, name));
             let sym2 = z3::Symbol::String(format!("{}{}", prefix2, name));
             let var1 = z3::ast::Int::new_const(ctx, sym1);
@@ -264,7 +264,7 @@ impl Z3Verifier {
         let func_name = func.sig.ident.to_string();
         let use_int_result = return_type
             .as_ref()
-            .map_or(false, returns_result_or_option_result)
+            .is_some_and(returns_result_or_option_result)
             && matches!(
                 func_name.as_str(),
                 "verify_script_with_context_full"
@@ -273,14 +273,14 @@ impl Z3Verifier {
             );
         let result1: z3::ast::Dynamic = if use_int_result {
             z3::ast::Int::new_const(ctx, result_sym1).into()
-        } else if return_type.as_ref().map_or(false, returns_bool_like) {
+        } else if return_type.as_ref().is_some_and(returns_bool_like) {
             z3::ast::Bool::new_const(ctx, result_sym1).into()
         } else {
             z3::ast::Int::new_const(ctx, result_sym1).into()
         };
         let result2: z3::ast::Dynamic = if use_int_result {
             z3::ast::Int::new_const(ctx, result_sym2).into()
-        } else if return_type.as_ref().map_or(false, returns_bool_like) {
+        } else if return_type.as_ref().is_some_and(returns_bool_like) {
             z3::ast::Bool::new_const(ctx, result_sym2).into()
         } else {
             z3::ast::Int::new_const(ctx, result_sym2).into()
