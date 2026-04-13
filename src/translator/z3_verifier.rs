@@ -96,7 +96,7 @@ impl Z3Verifier {
             Ok((expr, constraints)) => (expr, constraints),
             Err(e) => {
                 return VerificationResult::Error {
-                    error: format!("Translation error: {}", e),
+                    error: format!("Translation error: {e}"),
                 };
             }
         };
@@ -249,16 +249,16 @@ impl Z3Verifier {
         let mut vars2 = Z3VarMap::new();
 
         for name in param_types.keys() {
-            let sym1 = z3::Symbol::String(format!("{}{}", prefix1, name));
-            let sym2 = z3::Symbol::String(format!("{}{}", prefix2, name));
+            let sym1 = z3::Symbol::String(format!("{prefix1}{name}"));
+            let sym2 = z3::Symbol::String(format!("{prefix2}{name}"));
             let var1 = z3::ast::Int::new_const(ctx, sym1);
             let var2 = z3::ast::Int::new_const(ctx, sym2);
             vars1.insert(name.clone(), var1.into());
             vars2.insert(name.clone(), var2.into());
         }
 
-        let result_sym1 = z3::Symbol::String(format!("{}result", prefix1));
-        let result_sym2 = z3::Symbol::String(format!("{}result", prefix2));
+        let result_sym1 = z3::Symbol::String(format!("{prefix1}result"));
+        let result_sym2 = z3::Symbol::String(format!("{prefix2}result"));
         // Result<T> / Option<Result<T>>: use Int for determinism (0=Err/None, 1=Ok(false), 2=Ok(true))
         // Only for functions that need it (script verification) - avoids breaking others
         let func_name = func.sig.ident.to_string();
@@ -297,7 +297,7 @@ impl Z3Verifier {
             }
             Err(e) => {
                 return VerificationResult::Error {
-                    error: format!("Could not translate body for run 1: {}", e),
+                    error: format!("Could not translate body for run 1: {e}"),
                 }
             }
         };
@@ -310,7 +310,7 @@ impl Z3Verifier {
             }
             Err(e) => {
                 return VerificationResult::Error {
-                    error: format!("Could not translate body for run 2: {}", e),
+                    error: format!("Could not translate body for run 2: {e}"),
                 }
             }
         };
