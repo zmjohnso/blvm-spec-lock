@@ -11,6 +11,27 @@ use regex::Regex;
 use std::path::PathBuf;
 use syn::{parse::Parse, Ident, LitStr, Token};
 
+/// Resolve Orange Paper markdown paths for `#[spec_locked]`.
+///
+/// Order:
+/// 1. `CARGO_MANIFEST_DIR/blvm-spec/` — vendored copy (matches what `cargo publish` unpacks).
+/// 2. `CARGO_MANIFEST_DIR/../blvm-spec/` — monorepo / local sibling layout.
+fn resolve_orange_paper_paths(manifest_dir: &str) -> Option<Vec<PathBuf>> {
+    let manifest = PathBuf::from(manifest_dir);
+    for spec_dir in [manifest.join("blvm-spec"), manifest.join("../blvm-spec")] {
+        let protocol = spec_dir.join("PROTOCOL.md");
+        let architecture = spec_dir.join("ARCHITECTURE.md");
+        let umbrella = spec_dir.join("THE_ORANGE_PAPER.md");
+        if protocol.exists() && architecture.exists() {
+            return Some(vec![protocol, architecture]);
+        }
+        if umbrella.exists() {
+            return Some(vec![umbrella]);
+        }
+    }
+    None
+}
+
 /// Arguments for #[spec_locked] attribute
 ///
 /// Supports multiple elegant syntaxes:
@@ -447,18 +468,11 @@ pub fn process_spec_locked(
             .collect::<Vec<_>>()
     } else {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let spec_dir = PathBuf::from(&manifest_dir).join("../blvm-spec");
-        let protocol = spec_dir.join("PROTOCOL.md");
-        let architecture = spec_dir.join("ARCHITECTURE.md");
-        let umbrella = spec_dir.join("THE_ORANGE_PAPER.md");
-
-        if protocol.exists() && architecture.exists() {
-            vec![protocol, architecture]
-        } else if umbrella.exists() {
-            vec![umbrella]
+        if let Some(paths) = resolve_orange_paper_paths(&manifest_dir) {
+            paths
         } else {
             let error_msg = format!(
-                "No Orange Paper spec found. Expected blvm-spec/PROTOCOL.md+ARCHITECTURE.md or blvm-spec/THE_ORANGE_PAPER.md (relative to {manifest_dir})"
+                "No Orange Paper spec found. Expected blvm-spec/PROTOCOL.md+ARCHITECTURE.md or blvm-spec/THE_ORANGE_PAPER.md (in-crate blvm-spec/ or ../blvm-spec). CARGO_MANIFEST_DIR={manifest_dir}"
             );
             return proc_macro::TokenStream::from(quote! {
                 compile_error!(#error_msg);

@@ -515,10 +515,16 @@ fn handle_verify(args: VerifyArgs) -> i32 {
         name,
         sections,
         format,
-        strict,
+        strict: strict_cli,
         spec_paths,
         timeout_secs,
     } = args;
+    // CI / scripts can force strict mode when using older cargo-spec-lock without `--strict` on the CLI.
+    let strict = strict_cli
+        || matches!(
+            std::env::var("SPEC_LOCK_STRICT").as_deref(),
+            Ok("1") | Ok("true") | Ok("yes")
+        );
 
     // Discover functions from explicit crate path
     let mut all_functions = match cli::verify::discover_functions(&crate_path) {

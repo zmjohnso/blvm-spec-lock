@@ -22,7 +22,8 @@
 //! ```
 //!
 //! (Examples are `ignore` for `cargo test` because `#[spec_locked]` needs the Orange Paper
-//! at `../blvm-spec` relative to this crate; run `cargo spec-lock` in a full workspace.)
+//! under `blvm-spec/` next to the crate manifest (vendored) or at `../blvm-spec` in a monorepo;
+//! run `cargo spec-lock` in a full workspace.)
 //!
 //! The macro automatically:
 //! 1. Reads the Orange Paper specification
