@@ -60,9 +60,6 @@ enum Commands {
         #[arg(long)]
         crate_path: Option<PathBuf>,
 
-        /// Files to verify (default: all files in crate)
-        files: Vec<String>,
-
         /// Filter by subsystem
         #[arg(long)]
         subsystem: Option<String>,
@@ -98,6 +95,10 @@ enum Commands {
         /// Path to Orange Paper (can pass multiple: --spec-path A B or --spec-path A,B)
         #[arg(long, num_args = 1.., value_delimiter = ',')]
         spec_path: Vec<PathBuf>,
+
+        // Positional args must be last so `--spec-path` and other flags parse correctly.
+        /// Files to verify (default: all files in crate)
+        files: Vec<String>,
     },
 
     /// Show coverage report
@@ -242,7 +243,6 @@ fn main() {
     let exit_code = match cli.command {
         Commands::Verify {
             crate_path,
-            files,
             subsystem,
             name,
             section,
@@ -252,6 +252,7 @@ fn main() {
             verbose: _,
             strict,
             spec_path,
+            files,
         } => handle_verify(VerifyArgs {
             crate_path: resolve_crate_path(crate_path),
             files,
