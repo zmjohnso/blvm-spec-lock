@@ -4,8 +4,8 @@
 *.pdb
 **/*.rmeta
 
-# Cargo.lock is committed: this crate ships the `cargo-spec-lock` binary; a lockfile keeps
-# CI and `cargo install --locked` reproducible (avoids surprise resolver upgrades to clap/syn).
+# Cargo.lock for libraries (workspace or app controls lockfile)
+Cargo.lock
 
 # Coverage reports and profiling
 /coverage/
