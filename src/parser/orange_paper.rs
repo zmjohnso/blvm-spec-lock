@@ -240,7 +240,7 @@ impl SpecParser {
         // Canonicalize when possible so `manifest/../blvm-spec/PROTOCOL.md` resolves correctly.
         let resolve = |p: &Path| -> Result<PathBuf, String> {
             if p.is_absolute() {
-                return std::fs::canonicalize(p).or_else(|_| Ok(p.to_path_buf()));
+                return std::fs::canonicalize(p).or(Ok(p.to_path_buf()));
             }
             if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
                 let candidate = PathBuf::from(manifest).join(p);
@@ -251,10 +251,9 @@ impl SpecParser {
                     return Ok(candidate);
                 }
             }
-            let cwd = std::env::current_dir()
-                .map_err(|e| format!("Failed to get cwd: {e}"))?;
+            let cwd = std::env::current_dir().map_err(|e| format!("Failed to get cwd: {e}"))?;
             let candidate = cwd.join(p);
-            std::fs::canonicalize(&candidate).or_else(|_| Ok(candidate))
+            std::fs::canonicalize(&candidate).or(Ok(candidate))
         };
         let p0 = resolve(paths[0].as_ref())?;
         let content = std::fs::read_to_string(&p0)
