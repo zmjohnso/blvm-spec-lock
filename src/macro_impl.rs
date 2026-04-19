@@ -18,13 +18,18 @@ use syn::{parse::Parse, Ident, LitStr, Token};
 /// 2. `CARGO_MANIFEST_DIR/../blvm-spec/` — monorepo / local sibling layout.
 fn resolve_orange_paper_paths(manifest_dir: &str) -> Option<Vec<PathBuf>> {
     let manifest = PathBuf::from(manifest_dir);
-    for spec_dir in [manifest.join("blvm-spec"), manifest.join("../blvm-spec")] {
+    let candidates = [manifest.join("blvm-spec"), manifest.join("../blvm-spec")];
+    // Prefer PROTOCOL.md + ARCHITECTURE.md from any candidate (canonical sections, e.g. 5.4, 11.4).
+    // Otherwise an in-crate THE_ORANGE_PAPER-only tree would win and hide ../blvm-spec in monorepos.
+    for spec_dir in &candidates {
         let protocol = spec_dir.join("PROTOCOL.md");
         let architecture = spec_dir.join("ARCHITECTURE.md");
-        let umbrella = spec_dir.join("THE_ORANGE_PAPER.md");
         if protocol.exists() && architecture.exists() {
             return Some(vec![protocol, architecture]);
         }
+    }
+    for spec_dir in &candidates {
+        let umbrella = spec_dir.join("THE_ORANGE_PAPER.md");
         if umbrella.exists() {
             return Some(vec![umbrella]);
         }

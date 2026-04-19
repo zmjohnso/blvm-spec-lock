@@ -236,15 +236,25 @@ impl SpecParser {
         if paths.is_empty() {
             return Err("At least one spec path required".to_string());
         }
-        // Resolve paths relative to cwd (supports both absolute and relative paths)
+        // Proc-macros run with an unreliable cwd; prefer CARGO_MANIFEST_DIR for relative paths.
+        // Canonicalize when possible so `manifest/../blvm-spec/PROTOCOL.md` resolves correctly.
         let resolve = |p: &Path| -> Result<PathBuf, String> {
             if p.is_absolute() {
-                Ok(p.to_path_buf())
-            } else {
-                std::env::current_dir()
-                    .map_err(|e| format!("Failed to get cwd: {e}"))
-                    .map(|cwd| cwd.join(p))
+                return std::fs::canonicalize(p).or_else(|_| Ok(p.to_path_buf()));
             }
+            if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+                let candidate = PathBuf::from(manifest).join(p);
+                if let Ok(c) = std::fs::canonicalize(&candidate) {
+                    return Ok(c);
+                }
+                if candidate.exists() {
+                    return Ok(candidate);
+                }
+            }
+            let cwd = std::env::current_dir()
+                .map_err(|e| format!("Failed to get cwd: {e}"))?;
+            let candidate = cwd.join(p);
+            std::fs::canonicalize(&candidate).or_else(|_| Ok(candidate))
         };
         let p0 = resolve(paths[0].as_ref())?;
         let content = std::fs::read_to_string(&p0)
@@ -1175,6 +1185,10 @@ impl SpecParser {
     /// Find subsection by granular ID (e.g., "5.1.1")
     /// Returns the section and subsection ID
     pub fn find_subsection(&self, granular_id: &str) -> Option<(&SpecSection, String)> {
+        // `#### 10.1.1` creates a top-level section key "10.1.1" (not nested under 10.1 content).
+        if let Some(section) = self.sections.get(granular_id) {
+            return Some((section, granular_id.to_string()));
+        }
         // Parse granular ID: "5.1.1" -> section "5.1", subsection "5.1.1"
         let parts: Vec<&str> = granular_id.split('.').collect();
         if parts.len() >= 2 {

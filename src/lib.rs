@@ -21,9 +21,9 @@
 //! }
 //! ```
 //!
-//! (Examples are `ignore` for `cargo test` because `#[spec_locked]` needs the Orange Paper
-//! under `blvm-spec/` next to the crate manifest (vendored) or at `../blvm-spec` in a monorepo;
-//! run `cargo spec-lock` in a full workspace.)
+//! (Examples are `ignore` for `cargo test` because `#[spec_locked]` needs `blvm-spec/` next to the
+//! crate manifest or `../blvm-spec`. If **PROTOCOL.md** and **ARCHITECTURE.md** exist in either
+//! place, they are preferred (merged); otherwise **THE_ORANGE_PAPER.md** is used as fallback.)
 //!
 //! The macro automatically:
 //! 1. Reads the Orange Paper specification
