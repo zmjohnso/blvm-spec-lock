@@ -175,12 +175,9 @@ jobs:
 
       - name: Pre-release smoke test
         if: steps.gate.outputs.do_release == 'true'
-        env:
-          CARGO_INCREMENTAL: "0"
         run: |
-          cargo check --all-features --quiet
-          cargo build --release --quiet -j 1 --bin cargo-spec-lock
-          cargo test --all-features --quiet -- --test-threads=1
+          # Manifest-only: full compile/tests already ran in CI; this catches a bad version-bump edit.
+          cargo metadata --format-version 1 --no-deps > /dev/null
 
       - name: Commit version bump
         if: steps.gate.outputs.do_release == 'true'
