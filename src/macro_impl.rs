@@ -485,8 +485,11 @@ pub fn process_spec_locked(
     };
 
     if spec_paths.is_empty() {
-        // SPEC_LOCK_SPEC_PATH set but resolved to nothing — treat as not found, pass through.
-        return proc_macro::TokenStream::from(quote! { #func });
+        let error_msg = "SPEC_LOCK_SPEC_PATH is set but empty or invalid";
+        return proc_macro::TokenStream::from(quote! {
+            compile_error!(#error_msg);
+            #func
+        });
     }
 
     // Parse specification (multi-file merge when PROTOCOL+ARCHITECTURE)
@@ -547,8 +550,10 @@ pub fn process_spec_locked(
                         (s, section_id_value.clone(), func_spec_opt)
                     }
                     None => {
-                        // Section not in spec (e.g. spec not fully cloned). Pass through.
-                        return proc_macro::TokenStream::from(quote! { #func });
+                        return proc_macro::TokenStream::from(quote! {
+                            compile_error!(concat!("Section or subsection ", #section_id_value, " not found in Orange Paper"));
+                            #func
+                        });
                     }
                 }
             }
@@ -568,9 +573,11 @@ pub fn process_spec_locked(
                     (s, section_id_value.clone(), func_spec_opt)
                 }
                 None => {
-                        // Section not in spec (e.g. spec not fully cloned). Pass through.
-                        return proc_macro::TokenStream::from(quote! { #func });
-                    }
+                    return proc_macro::TokenStream::from(quote! {
+                        compile_error!(concat!("Section ", #section_id_value, " not found in Orange Paper"));
+                        #func
+                    });
+                }
             }
         }
     } else {
