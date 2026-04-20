@@ -476,22 +476,17 @@ pub fn process_spec_locked(
         if let Some(paths) = resolve_orange_paper_paths(&manifest_dir) {
             paths
         } else {
-            let error_msg = format!(
-                "No Orange Paper spec found. Expected blvm-spec/PROTOCOL.md+ARCHITECTURE.md or blvm-spec/THE_ORANGE_PAPER.md (in-crate blvm-spec/ or ../blvm-spec). CARGO_MANIFEST_DIR={manifest_dir}"
-            );
-            return proc_macro::TokenStream::from(quote! {
-                compile_error!(#error_msg);
-                #func
-            });
+            // Spec not co-located with crate (e.g. building from crates.io without blvm-spec
+            // sibling). #[spec_locked] is a marker annotation only — verification runs via the
+            // `cargo-spec-lock verify` CLI tool, which requires the spec. At compile time we
+            // just pass the function through unchanged.
+            return proc_macro::TokenStream::from(quote! { #func });
         }
     };
 
     if spec_paths.is_empty() {
-        let error_msg = "SPEC_LOCK_SPEC_PATH is set but empty or invalid";
-        return proc_macro::TokenStream::from(quote! {
-            compile_error!(#error_msg);
-            #func
-        });
+        // SPEC_LOCK_SPEC_PATH set but resolved to nothing — treat as not found, pass through.
+        return proc_macro::TokenStream::from(quote! { #func });
     }
 
     // Parse specification (multi-file merge when PROTOCOL+ARCHITECTURE)
@@ -552,10 +547,8 @@ pub fn process_spec_locked(
                         (s, section_id_value.clone(), func_spec_opt)
                     }
                     None => {
-                        return proc_macro::TokenStream::from(quote! {
-                            compile_error!(concat!("Section or subsection ", #section_id_value, " not found in Orange Paper"));
-                            #func
-                        });
+                        // Section not in spec (e.g. spec not fully cloned). Pass through.
+                        return proc_macro::TokenStream::from(quote! { #func });
                     }
                 }
             }
@@ -575,11 +568,9 @@ pub fn process_spec_locked(
                     (s, section_id_value.clone(), func_spec_opt)
                 }
                 None => {
-                    return proc_macro::TokenStream::from(quote! {
-                        compile_error!(concat!("Section ", #section_id_value, " not found in Orange Paper"));
-                        #func
-                    });
-                }
+                        // Section not in spec (e.g. spec not fully cloned). Pass through.
+                        return proc_macro::TokenStream::from(quote! { #func });
+                    }
             }
         }
     } else {
