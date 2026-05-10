@@ -722,6 +722,25 @@ impl SpecParser {
                 }
                 continue;
             }
+            // Skip inline bold markers (e.g. **BIP 342**, **not**, **important**).
+            // A real function spec has its closing ** immediately followed by ':'.
+            // Inline bold has its closing ** followed by anything other than ':'.
+            match after.find("**") {
+                Some(close_pos) => {
+                    let after_close = after[close_pos + 2..].trim_start_matches(' ');
+                    if !after_close.starts_with(':') {
+                        // Inline bold — skip past closing **
+                        search_start = abs_pos + 2 + close_pos + 2;
+                        continue;
+                    }
+                    // Closing ** is followed by ':' — this is a function spec; fall through
+                }
+                None => {
+                    // Unclosed ** marker — skip past it
+                    search_start = abs_pos + 2;
+                    continue;
+                }
+            }
             return abs_pos;
         }
         content.len()
