@@ -12,26 +12,28 @@ This guide explains how to add `#[spec_locked("section")]` to functions so they 
 
 2. **Use the correct section** from the Orange Paper (e.g. `5.2` for Script Execution, `11.1` for SegWit).
 
-3. **Run spec-enrich** so contracts are derived from the spec:
+3. **Run check-drift** so spec contracts stay parseable:
+
    ```bash
-   cargo spec-lock verify --spec-path ../blvm-spec/THE_ORANGE_PAPER.md --crate-path ../blvm-consensus
+   cargo spec-lock check-drift --spec-path ../blvm-spec/PROTOCOL.md ../blvm-spec/ARCHITECTURE.md --crate-path ../blvm-consensus
    ```
 
 4. **Verify** (with Z3 for full SMT solving):
+
    ```bash
-   cargo run --features z3 -p blvm-spec-lock --bin cargo-spec-lock -- verify \
-     --spec-path ../blvm-spec/THE_ORANGE_PAPER.md --crate-path ../blvm-consensus
+   cargo run --features z3 -p blvm-spec-lock --bin cargo-spec-lock -- verify --strict \
+     --spec-path ../blvm-spec/PROTOCOL.md ../blvm-spec/ARCHITECTURE.md --crate-path ../blvm-consensus
    ```
 
 ## Current Coverage
 
-| Crate | Annotated | Verified |
-|-------|-----------|----------|
-| **blvm-consensus** | 148 | 148 (100%) |
+| Crate | Annotated (`#[spec_locked]`) | Verified (strict + Z3, CI target) |
+|-------|------------------------------|-----------------------------------|
+| **blvm-consensus** | 168 | 168 (re-run `verify` / `coverage` after changes) |
 | **blvm-node** | 5 | 5 (Dandelion 10.6) |
-| **blvm-protocol** | 3 | 3 (UTXO commitments 11.4) |
+| **blvm-protocol** | 6 | 6 (11.4 + 13.4; use `verify --section` when scoping) |
 
-All 138 blvm-consensus functions are Z3-verified. blvm-protocol has 3 UTXO commitment functions annotated; `generate_commitment` has no spec-derived contracts yet; `find_consensus` and `verify_consensus_commitment` have partial verification (spec contracts exist but Z3 may not fully verify).
+Re-check counts with `rg '#\[spec_locked' --glob '*.rs'` or **`cargo spec-lock coverage --format json`**. Stale hard-coded totals in docs are a recurring failure mode—prefer commands.
 
 ## What Remains to Annotate
 
@@ -58,7 +60,7 @@ Serialization (transaction/block encoding) and constants validation—add Orange
 3. **Add `#[spec_locked("X.Y")]`** above the function.
 4. **Run drift check** to ensure spec and impl align:
    ```bash
-   cargo spec-lock check-drift --spec-path ../blvm-spec/THE_ORANGE_PAPER.md --crate-path ../blvm-consensus
+   cargo spec-lock check-drift --spec-path ../blvm-spec/PROTOCOL.md ../blvm-spec/ARCHITECTURE.md --crate-path ../blvm-consensus
    ```
 5. **Run verify** (with `--features z3` for full verification).
 
@@ -86,4 +88,4 @@ The spec parser matches by name (PascalCase ↔ snake_case). If no exact match, 
 - [SPEC_WORDING.md](../SPEC_WORDING.md) — Parseable condition patterns (use these when adding spec Properties)
 - [SPEC_AS_SOURCE_OF_TRUTH.md](../SPEC_AS_SOURCE_OF_TRUTH.md) — Contract flow
 - [SPEC_LOCK_COVERAGE.md](../SPEC_LOCK_COVERAGE.md) — Current status
-- **Verification roadmap** — In a full Bitcoin Commons workspace, the sibling tree has `docs/VERIFICATION_COVERAGE_TRACKING.md` (not shipped in this crate). Status note: partially outdated; 138 consensus functions now done.
+- **Verification roadmap** — In a full Bitcoin Commons workspace, the sibling tree has `docs/VERIFICATION_COVERAGE_TRACKING.md` (not shipped in this crate). Prefer **`SPEC_LOCK_COVERAGE.md`** and **`cargo spec-lock coverage`** for current numbers.

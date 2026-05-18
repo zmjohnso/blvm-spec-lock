@@ -110,7 +110,7 @@ With Z3: add `--features z3` to the `cargo run` command.
 
 - **Negative test**: `cargo test wrong_implementation_fails` — wrong impl must fail verification.
 - **Spec coverage**: `cargo spec-lock coverage --spec-path ...` — theorems → contracts → parseable %.
-- **Drift**: `cargo spec-lock check-drift --spec-path ...` — unparseable contracts, missing impls.
+- **Drift**: `cargo spec-lock check-drift --spec-path ...` — unparseable contracts, missing impls. **`--scoped-unparseables`** limits unparseable failures to Orange Paper sections under the crate’s **`#[spec_locked("…")]`** prefixes.
 
 ## Spec Wording
 

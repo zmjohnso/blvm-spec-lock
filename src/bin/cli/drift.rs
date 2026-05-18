@@ -20,6 +20,8 @@ pub struct DriftResult {
     pub auto_inferred: Vec<FunctionToVerify>,
     /// Spec contracts that are unparseable (spec has them but we can't verify)
     pub unparseable_spec_contracts: Vec<UnparseableContract>,
+    /// With `--scoped-unparseables`: unparseables in sections not referenced by `#[spec_locked]` (informational)
+    pub unparseable_omitted_outside_scope: usize,
 }
 
 /// A spec contract that couldn't be parsed for verification
@@ -40,9 +42,13 @@ pub struct MismatchedContract {
 }
 
 /// Detect spec drift
+///
+/// When `scoped_unparseables` is true, only unparseable spec properties in sections that match a
+/// `#[spec_locked("…")]` prefix in the crate contribute to drift / failure.
 pub fn detect_drift(
     workspace_root: &PathBuf,
     orange_paper_paths: Option<&[PathBuf]>,
+    scoped_unparseables: bool,
 ) -> Result<DriftResult, String> {
     use crate::parser::condition;
     use crate::parser::orange_paper::SpecParser;
@@ -99,13 +105,69 @@ pub fn detect_drift(
         }
     }
 
+    let locked_sections: std::collections::HashSet<String> =
+        functions.iter().filter_map(|f| f.section.clone()).collect();
+
+    let (unparseable_spec_contracts, unparseable_omitted_outside_scope) = if scoped_unparseables {
+        let full = unparseable_spec_contracts;
+        let mut kept = Vec::new();
+        let mut omitted = 0usize;
+        for u in full {
+            if unparseable_in_scope(&u.section, &locked_sections) {
+                kept.push(u);
+            } else {
+                omitted += 1;
+            }
+        }
+        (kept, omitted)
+    } else {
+        (unparseable_spec_contracts, 0)
+    };
+
     Ok(DriftResult {
         mismatched_contracts,
         missing_from_spec,
         missing_implementations,
         auto_inferred,
         unparseable_spec_contracts,
+        unparseable_omitted_outside_scope,
     })
+}
+
+/// `spec_section` is in scope if it equals or extends any `#[spec_locked]` section (dot-separated prefix).
+fn unparseable_in_scope(
+    spec_section: &str,
+    locked_sections: &std::collections::HashSet<String>,
+) -> bool {
+    locked_sections
+        .iter()
+        .any(|lock| spec_section_matches_lock(spec_section, lock))
+}
+
+fn spec_section_matches_lock(spec_section: &str, lock: &str) -> bool {
+    let spec_parts: Vec<&str> = spec_section.split('.').collect();
+    let lock_parts: Vec<&str> = lock.split('.').collect();
+    if spec_parts.len() < lock_parts.len() {
+        return false;
+    }
+    spec_parts[..lock_parts.len()] == lock_parts[..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spec_section_matches_lock;
+
+    #[test]
+    fn section_prefix_does_not_match_sibling_minor() {
+        assert!(!spec_section_matches_lock("5.10", "5.1"));
+        assert!(!spec_section_matches_lock("5.1", "5.1.1"));
+    }
+
+    #[test]
+    fn section_prefix_matches_descendants() {
+        assert!(spec_section_matches_lock("5.1.1", "5.1"));
+        assert!(spec_section_matches_lock("5.1", "5.1"));
+    }
 }
 
 /// Convert Rust snake_case to PascalCase
@@ -235,6 +297,12 @@ pub fn format_drift_human(result: &DriftResult) -> String {
         "  Unparseable spec contracts: {}\n",
         result.unparseable_spec_contracts.len()
     ));
+    if result.unparseable_omitted_outside_scope > 0 {
+        output.push_str(&format!(
+            "  Unparseable outside scoped sections (omitted): {}\n",
+            result.unparseable_omitted_outside_scope
+        ));
+    }
     output.push_str(&format!(
         "  Auto-inferred: {}\n",
         result.auto_inferred.len()
@@ -279,6 +347,7 @@ pub fn format_drift_json(result: &DriftResult) -> String {
             "file": f.file_path.display().to_string(),
         })).collect::<Vec<_>>(),
         "missing_implementations": result.missing_implementations,
+        "unparseable_omitted_outside_scope": result.unparseable_omitted_outside_scope,
     })
     .to_string()
 }

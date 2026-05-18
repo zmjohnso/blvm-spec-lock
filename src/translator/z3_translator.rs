@@ -2,6 +2,10 @@
 //!
 //! Translates Rust expressions AND function bodies to Z3 expressions for verification.
 //! Focused on Bitcoin-specific patterns (u64, i64, Vec, arithmetic, comparisons).
+//! Variable `>>` / `<<` use UF `shr` / `shl` with axioms in `z3_verifier`; literal RHS uses `div` /
+//! `mul` with exact `2^k` via [`Z3Translator::pow2_int`].
+//! `%` (Rem) maps to Z3 `rem`; `&` with a constant mask uses `div`/`rem` patterns when the mask is
+//! a power of two or one less than a power of two (including mask on the left operand).
 //!
 //! ## Key Insight: Implementation IS the Formula
 //!
@@ -86,8 +90,8 @@ impl Z3Translator {
                             let left_int = left.as_int().ok_or_else(|| {
                                 TranslationError::TypeError("Expected Int".to_string())
                             })?;
-                            let divisor = 1i64 << shift_val;
-                            return Ok(left_int.div(&Int::from_i64(&self.ctx, divisor)).into());
+                            let divisor = Self::pow2_int(&self.ctx, shift_val as u32);
+                            return Ok(left_int.div(&divisor).into());
                         }
                     }
                 }
@@ -97,8 +101,8 @@ impl Z3Translator {
                             let left_int = left.as_int().ok_or_else(|| {
                                 TranslationError::TypeError("Expected Int".to_string())
                             })?;
-                            let multiplier = 1i64 << shift_val;
-                            return Ok((left_int * Int::from_i64(&self.ctx, multiplier)).into());
+                            let multiplier = Self::pow2_int(&self.ctx, shift_val as u32);
+                            return Ok((left_int * multiplier).into());
                         }
                     }
                 }
@@ -126,6 +130,24 @@ impl Z3Translator {
                             if (next_power as u64).is_power_of_two() {
                                 let modulus = Int::from_i64(&self.ctx, next_power);
                                 return Ok(left_int.rem(&modulus).into());
+                            }
+                        }
+                    }
+                    // Commutative: constant mask on the left
+                    if let Some(mask) = extract_int_literal(&bin.left) {
+                        if mask > 0 {
+                            let mask_u = mask as u64;
+                            if mask_u.is_power_of_two() {
+                                let divisor = Int::from_i64(&self.ctx, mask);
+                                let two = Int::from_i64(&self.ctx, 2);
+                                let quotient = right_int.div(&divisor);
+                                let bit = quotient.rem(&two);
+                                return Ok((bit * divisor).into());
+                            }
+                            let next_power = mask + 1;
+                            if (next_power as u64).is_power_of_two() {
+                                let modulus = Int::from_i64(&self.ctx, next_power);
+                                return Ok(right_int.rem(&modulus).into());
                             }
                         }
                     }
@@ -406,10 +428,16 @@ impl Z3Translator {
                     .ok_or_else(|| TranslationError::TypeError("Expected Int".to_string()))?;
                 Ok(left_int.div(&right_int).into())
             }
+            syn::BinOp::Rem(_) => {
+                let left_int = left
+                    .as_int()
+                    .ok_or_else(|| TranslationError::TypeError("Expected Int".to_string()))?;
+                let right_int = right
+                    .as_int()
+                    .ok_or_else(|| TranslationError::TypeError("Expected Int".to_string()))?;
+                Ok(left_int.rem(&right_int).into())
+            }
             syn::BinOp::Shr(_) => {
-                // Right shift: a >> b is equivalent to a / 2^b for non-negative values
-                // For simplicity with Z3, we model this using uninterpreted function
-                // or approximate for common cases
                 let left_int = left
                     .as_int()
                     .ok_or_else(|| TranslationError::TypeError("Expected Int".to_string()))?;
@@ -417,8 +445,6 @@ impl Z3Translator {
                     .as_int()
                     .ok_or_else(|| TranslationError::TypeError("Expected Int".to_string()))?;
 
-                // Create an uninterpreted shift function
-                // This allows Z3 to reason about shift operations abstractly
                 let shift_fn = z3::FuncDecl::new(
                     &self.ctx,
                     "shr",
@@ -428,7 +454,6 @@ impl Z3Translator {
                 Ok(shift_fn.apply(&[&left_int, &right_int]))
             }
             syn::BinOp::Shl(_) => {
-                // Left shift: a << b is equivalent to a * 2^b
                 let left_int = left
                     .as_int()
                     .ok_or_else(|| TranslationError::TypeError("Expected Int".to_string()))?;
@@ -561,6 +586,17 @@ impl Z3Translator {
                 Ok((left_bool | right_bool).into())
             }
             _ => Err(TranslationError::UnsupportedOperator(format!("{op:?}"))),
+        }
+    }
+
+    /// Exact `2^k` as Z3 `Int` for `k < 64` (avoids host `1i64 << 63` overflow).
+    pub(crate) fn pow2_int(ctx: &Context, k: u32) -> Int<'_> {
+        debug_assert!(k < 64);
+        let v = 1u128 << k;
+        if v <= i64::MAX as u128 {
+            Int::from_i64(ctx, v as i64)
+        } else {
+            Int::from_str(ctx, &v.to_string()).expect("Z3 int pow2")
         }
     }
 

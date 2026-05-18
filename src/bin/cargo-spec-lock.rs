@@ -18,8 +18,12 @@ mod translator;
 mod cli;
 
 #[derive(Parser)]
-#[command(name = "cargo-spec-lock")]
-#[command(about = "BLVM Spec Lock verification tool", long_about = None)]
+#[command(
+    name = "cargo-spec-lock",
+    version,
+    about = "BLVM Spec Lock verification tool",
+    long_about = None
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -156,6 +160,11 @@ enum Commands {
         #[arg(long)]
         crate_path: Option<PathBuf>,
 
+        /// Only treat unparseable spec properties as drift when their section is referenced by a
+        /// `#[spec_locked]` attribute in the scanned crate (prefix match, e.g. lock `5.1` includes `5.1.2`).
+        #[arg(long)]
+        scoped_unparseables: bool,
+
         /// Output format
         #[arg(long, default_value = "human")]
         format: OutputFormat,
@@ -290,10 +299,12 @@ fn main() {
         Commands::CheckDrift {
             spec_path,
             crate_path,
+            scoped_unparseables,
             format,
         } => handle_check_drift(
             resolve_spec_paths(spec_path),
             resolve_crate_path(crate_path),
+            scoped_unparseables,
             format,
         ),
         Commands::ExtractConstants { spec_path, output } => {
@@ -313,13 +324,19 @@ fn main() {
     std::process::exit(exit_code);
 }
 
-fn handle_check_drift(spec_paths: Vec<PathBuf>, crate_path: PathBuf, format: OutputFormat) -> i32 {
+fn handle_check_drift(
+    spec_paths: Vec<PathBuf>,
+    crate_path: PathBuf,
+    scoped_unparseables: bool,
+    format: OutputFormat,
+) -> i32 {
     if spec_paths.is_empty() {
         eprintln!("Error: --spec-path or SPEC_LOCK_SPEC_PATH required for check-drift");
         return 1;
     }
 
-    let result = match cli::drift::detect_drift(&crate_path, Some(&spec_paths)) {
+    let result = match cli::drift::detect_drift(&crate_path, Some(&spec_paths), scoped_unparseables)
+    {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error detecting drift: {e}");
@@ -526,6 +543,14 @@ fn handle_verify(args: VerifyArgs) -> i32 {
             std::env::var("SPEC_LOCK_STRICT").as_deref(),
             Ok("1") | Ok("true") | Ok("yes")
         );
+
+    // Richer / heavier Z3 obligations: raise timeout without changing CI invocations.
+    // Overrides `--timeout` when set to a positive integer (seconds per function).
+    let timeout_secs = std::env::var("SPEC_LOCK_Z3_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&t| t > 0)
+        .unwrap_or(timeout_secs);
 
     // Discover functions from explicit crate path
     let mut all_functions = match cli::verify::discover_functions(&crate_path) {

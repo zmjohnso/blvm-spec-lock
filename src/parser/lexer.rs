@@ -188,7 +188,9 @@ impl Lexer {
         if c == '\\' {
             if let Some(cmd) = self.read_backslash_command() {
                 match cmd.as_str() {
-                    "text" => {
+                    "text" =>
+                    {
+                        #[allow(clippy::collapsible_match)]
                         if self.peek() == Some('{') {
                             if let Some(inner) = self.read_curly_content() {
                                 return Some(Token::Ident(inner));

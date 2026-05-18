@@ -152,15 +152,13 @@ fn parse_file_for_functions(file_path: &std::path::Path) -> Result<Vec<FunctionT
 
     for item in ast.items {
         match item {
-            syn::Item::Fn(func) => {
-                if has_spec_locked(&func.attrs) {
-                    functions.push(make_function_to_verify(
-                        file_path,
-                        &func.sig.ident.to_string(),
-                        &func.attrs,
-                        &func,
-                    ));
-                }
+            syn::Item::Fn(func) if has_spec_locked(&func.attrs) => {
+                functions.push(make_function_to_verify(
+                    file_path,
+                    &func.sig.ident.to_string(),
+                    &func.attrs,
+                    &func,
+                ));
             }
             syn::Item::Impl(impl_item) => {
                 for assoc_item in &impl_item.items {

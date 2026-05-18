@@ -70,6 +70,17 @@ The Orange Paper parser (`src/parser/orange_paper.rs`) translates properties via
 - `\text{FunctionName}(args)` → `result`
 - `\iff` → implication; conclusion is used for ensures
 
+### Function blocks (`**Name**:`) vs metadata
+
+The markdown scanner ends a spec function’s block at the next `**SingleWord**:` line. The following bold headers are **not** function signatures: they are skipped during scanning so they do not cut off **`**Properties**:`** for the real function above them:
+
+- **`**Properties**:`** (and **`**Properties** (Updated):`**) — contracts list
+- **`**Inputs**:`** — narrative inputs (e.g. §11.1.5)
+- **`**Definition**:`** / **`**Definition** (…):`** — algorithm prose (the parser treats real specs as `(Qualifier):` lines whose payload starts with `$` / `\`)
+- **`**Activation**:`**, **`**Deactivation**:`**, **`**References**:`**, **`**Mainnet**:`**, **`**Regtest**:`** — deployment / reference notes
+
+Put math signatures immediately after **`**Func**:`** or after **`(Updated):`**, and keep metadata on these recognizable headers (or in bullet lists) so locking stays predictable.
+
 ## Implemented
 
 - **Determinism verification** – Two-run Z3 for `result(a) == result(b)`.

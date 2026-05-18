@@ -4,20 +4,31 @@ This document describes blvm-spec-lock verification status across blvm-consensus
 
 **Scope**: The Orange Paper focuses on **consensus only**. RPC, rate limiters, and node-internal design (beyond wire format) are out of scope. See [CONSENSUS_SPEC_FOCUS_PLAN.md](../docs/CONSENSUS_SPEC_FOCUS_PLAN.md).
 
-## Actual spec_locked Count (as of plan completion)
+## Actual `#[spec_locked]` count (inventory)
+
+Authoritative counts change as code evolves. Regenerate with:
+
+```bash
+rg '#\[spec_locked' --glob '*.rs' ../blvm-consensus/src | wc -l
+# or: cargo spec-lock coverage --crate-path ../blvm-consensus --spec-path ... --format json
+```
+
+**Workspace snapshot (consensus-focused pass):**
 
 | Crate | Functions with `#[spec_locked]` |
 |-------|---------------------------------|
-| **blvm-consensus** | **166** |
-| **blvm-node** | **8** |
+| **blvm-consensus** | **168** |
+| **blvm-node** | **5** (Dandelion 10.6) |
 | **blvm-protocol** | **6** (11.4 UTXO commitments + 13.4 peer consensus) |
-| **Total** | **180** |
+| **Total** | **179** |
 
-All point to valid Orange Paper sections. With `--spec-path`, all 140 discovered functions receive spec-derived contracts (0 no-contracts). No sections reference removed content (8.2.2 serialization, 13.3.2 serialization theorems).
+All point to valid Orange Paper sections. With **`PROTOCOL.md` + `ARCHITECTURE.md`** and **`--spec-path`**, locked consensus functions receive spec-derived contracts (**`check-drift`** unparseables = 0; **`SPEC_LOCK_STRICT=1`** + Z3 **`verify`** passes on **blvm-consensus**).
+
+**Parseable / contract totals:** run **`cargo spec-lock coverage`** (human or **`--format json`**) instead of freezing numbers in prose. Example (this checkout): **168** impl functions with contracts, **433** parseable contracts, **100%** parseable rate for **blvm-consensus**.
 
 ## Locked Sections by Orange Paper
 
-All 148 consensus functions map to these spec sections (each section may have multiple functions):
+The **168** consensus locks map to these spec sections (each section may have multiple functions):
 
 | Section | Modules |
 |---------|---------|
@@ -38,17 +49,17 @@ All 148 consensus functions map to these spec sections (each section may have mu
 
 ## Maximum Consensus Coverage
 
-**Current status (verified)**: All `#[spec_locked]` functions in blvm-consensus are fully covered:
+**Current status (verified)**: With strict mode and Z3, all **`#[spec_locked]`** functions in **blvm-consensus** discovered by **`verify`** are expected to reach **PASSED** in CI.
 
-| Metric | Value |
-|--------|-------|
-| **Z3 verified** | 162 passed, 0 failed |
-| **Parseable** | 100% (412/412 contracts) |
-| **Missing from spec** | 0 |
-| **Unparseable** | 0 |
-| **Drift** | 0 |
+| Metric | Value (reconfirm with commands) |
+|--------|----------------------------------|
+| **Z3 + strict (`verify`)** | Exit **0** on **blvm-consensus**; **168** locked functions in tree |
+| **Parseable (`coverage`)** | e.g. **433** / **433** contracts, **100%** (this checkout) |
+| **Missing from spec** | **0** (goal: stay **0** after **`check-drift`**) |
+| **Unparseable** | **0** | **check-drift** is blocking in **blvm-consensus** CI |
+| **Drift** | **0** unparseables for scanned crate |
 
-**Remaining gap**: ~29 Orange Paper functions not yet annotated (serialization, network protocol, internal helpers). SegWit/Taproot weight/merkle/witness helpers, P2SH redeem extraction, witness sigops, coinbase creation, block hash, difficulty expansion, disconnect/chain-work are now locked. For *currently* annotated functions, we have maximum coverage.
+**Remaining gap**: Orange Paper items not yet carried as standalone **`#[spec_locked]`** Rust entry points (serialization, more of network protocol, primitives-only helpers). For functions that *are* locked today, **`verify`** + drift gates aim for full spec-derived obligations.
 
 ## Summary
 
@@ -100,23 +111,31 @@ blvm-node `dandelion.rs` has `#[spec_locked("10.6")]` on the key functions.
 
 ```bash
 cd blvm-spec-lock
-# blvm-consensus (166 functions)
+# blvm-consensus (168 #[spec_locked] in this workspace)
 cargo run --bin cargo-spec-lock -- verify --strict \
-  --spec-path ../blvm-spec/PROTOCOL.md --spec-path ../blvm-spec/ARCHITECTURE.md \
+  --spec-path ../blvm-spec/PROTOCOL.md ../blvm-spec/ARCHITECTURE.md \
   --crate-path ../blvm-consensus
 
 # blvm-node Dandelion
 cargo run --bin cargo-spec-lock -- verify --strict \
-  --spec-path ../blvm-spec/PROTOCOL.md --spec-path ../blvm-spec/ARCHITECTURE.md \
+  --spec-path ../blvm-spec/PROTOCOL.md ../blvm-spec/ARCHITECTURE.md \
   --crate-path ../blvm-node
 
 # blvm-protocol UTXO commitments (11.4) and peer consensus (13.4)
 cargo run --bin cargo-spec-lock -- verify --strict \
-  --spec-path ../blvm-spec/PROTOCOL.md --spec-path ../blvm-spec/ARCHITECTURE.md \
+  --spec-path ../blvm-spec/PROTOCOL.md ../blvm-spec/ARCHITECTURE.md \
   --crate-path ../blvm-protocol --section 11.4 --section 13.4
 ```
 
-`--strict` fails on any partial; Z3 is default. Use `--no-default-features` only if you cannot build with libclang.
+**Strict:** set **`SPEC_LOCK_STRICT=1`** if your **`cargo-spec-lock`** build has no **`--strict`** flag (matches **blvm-consensus** CI). Z3 is default with **`--features z3`**. Use **`--no-default-features`** only if you cannot build with libclang.
+
+**Drift (before verify in CI):**
+
+```bash
+cargo run --bin cargo-spec-lock -- check-drift \
+  --spec-path ../blvm-spec/PROTOCOL.md ../blvm-spec/ARCHITECTURE.md \
+  --crate-path ../blvm-consensus
+```
 
 See `SPEC_AS_SOURCE_OF_TRUTH.md` for architecture details. For parseable condition patterns, see [SPEC_WORDING.md](SPEC_WORDING.md).
 
@@ -124,11 +143,11 @@ See `SPEC_AS_SOURCE_OF_TRUTH.md` for architecture details. For parseable conditi
 
 | Status | Count | Notes |
 |--------|-------|-------|
-| Passed | 162 | Fully verified |
-| Failed | 0 | All gaps filled |
-| No-contracts | 0 | All functions have spec-derived contracts |
-| Parseable | **100%** | 412/412 contracts |
-| Missing from spec | 0 | spec_enrich runs before drift check |
+| Passed | *strict `verify` exit 0* | Fully verified per tool output |
+| Failed | 0 | Fails CI |
+| No-contracts | 0 | Strict mode rejects gaps |
+| Parseable | **100%** (example: 433/433) | Run **`coverage`** for current totals |
+| Missing from spec | 0 | **`check-drift`** / enrich should stay clean |
 
 ## Plan to Complete All Spec Locks
 
@@ -152,6 +171,7 @@ See `SPEC_AS_SOURCE_OF_TRUTH.md` for architecture details. For parseable conditi
 ## Validation Improvements
 
 - **Negative tests**: `cargo test wrong_implementation_fails` — wrong impl (e.g. `get_block_subsidy` returning -1) must fail verification.
-- **Spec coverage**: `cargo spec-lock coverage --spec-path ...` — theorems → contracts → parseable % (100%, 412/412).
-- **Drift detection**: `cargo spec-lock check-drift --spec-path ...` — unparseable spec contracts, missing-from-spec, auto-inferred.
+- **Spec coverage**: `cargo spec-lock coverage --spec-path ... --format json` — theorems → contracts → parseable % (re-run for current totals).
+- **Drift detection**: `cargo spec-lock check-drift --spec-path ...` — unparseable spec contracts, missing-from-spec, auto-inferred. Use **`--scoped-unparseables`** to gate only sections referenced by **`#[spec_locked]`** in the crate (incremental / multi-crate workflows).
+- **Trivial post-enrich contracts**: periodically search generated / expanded obligation dumps for **`ensures(true)`** or enrichment fallbacks after spec edits (no dedicated CI report yet; see plan P5).
 - **Lexer**: `∀h ∈ ℕ: P(h)` strips quantifier → `P(h)` for parsing.

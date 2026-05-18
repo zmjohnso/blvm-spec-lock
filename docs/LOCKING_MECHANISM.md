@@ -87,6 +87,8 @@ When `--spec-path` is provided, contracts come **only** from the spec. Manual `#
 
 Use Z3 for full verification. Static mode is a fallback when Z3 is not available.
 
+Per-function solver time can be raised with **`--timeout <secs>`** on **`verify`**, or with **`SPEC_LOCK_Z3_TIMEOUT_SECS`** in the environment (overrides **`--timeout`** when set to a positive integer), which helps when Orange Paper **Properties** are richer and Z3 returns **Unknown** under the default budget.
+
 ## Status Semantics
 
 | Status | Meaning |

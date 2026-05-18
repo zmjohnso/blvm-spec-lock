@@ -349,6 +349,13 @@ impl SpecParser {
             if name == "Properties" || name == "Theorem" {
                 continue;
             }
+            // Single-word `**…**:` prose/metadata (not operable function specs)
+            if matches!(
+                name.as_str(),
+                "Inputs" | "Activation" | "Deactivation" | "References" | "Mainnet" | "Regtest"
+            ) {
+                continue;
+            }
             let signature = cap.get(2).map(|m| m.as_str().to_string());
 
             let mut func_spec = FunctionSpec {
@@ -697,20 +704,33 @@ impl SpecParser {
         result.chars().rev().collect()
     }
 
+    /// `**Word**:` lines that are not Orange Paper function signatures (metadata / prose).
+    /// Must not end the previous `**Func**:` block, or enrichment loses **Properties**.
+    fn skip_metadata_bold_header_len(after_open_bold: &str) -> Option<usize> {
+        let metadata = after_open_bold.starts_with("Properties**")
+            || after_open_bold.starts_with("Inputs**")
+            || after_open_bold.starts_with("Activation**")
+            || after_open_bold.starts_with("Deactivation**")
+            || after_open_bold.starts_with("References**")
+            || after_open_bold.starts_with("Mainnet**")
+            || after_open_bold.starts_with("Regtest**");
+        if metadata {
+            after_open_bold
+                .find(':')
+                .map(|colon| colon.saturating_add(1))
+        } else {
+            None
+        }
+    }
+
     /// Find the position where the next function block starts (not **Properties** or **Theorem**)
     fn find_next_function_boundary(content: &str) -> usize {
         let mut search_start = 0;
         while let Some(pos) = content[search_start..].find("**") {
             let abs_pos = search_start + pos;
             let after = &content[abs_pos + 2..];
-            // Skip **Properties**: and **Theorem X**: (skip the entire header, not just first **)
-            if after.starts_with("Properties**") && !after.starts_with("Properties** (") {
-                // Skip past "Properties**:" to avoid returning at the closing **
-                if let Some(colon) = after.find(':') {
-                    search_start = abs_pos + 2 + colon + 1;
-                } else {
-                    search_start = abs_pos + 2;
-                }
+            if let Some(advance) = Self::skip_metadata_bold_header_len(after) {
+                search_start = abs_pos + 2 + advance;
                 continue;
             }
             if after.starts_with("Theorem") && !after.starts_with("Theorem** (") {
@@ -729,11 +749,30 @@ impl SpecParser {
                 Some(close_pos) => {
                     let after_close = after[close_pos + 2..].trim_start_matches(' ');
                     if !after_close.starts_with(':') {
+                        // **Name** (Qualifier): signature — e.g. **SighashScriptCode** (Updated):
+                        if after_close.starts_with('(') {
+                            if let Some(i) = after_close.find(')') {
+                                let rest = after_close[i + 1..].trim_start();
+                                if let Some(tail) = rest.strip_prefix(':') {
+                                    let tail = tail.trim_start();
+                                    // Prose after "(Qualifier):" (e.g. **Definition** (BIP141 …): For each…)
+                                    // is not a function boundary; real specs put $…$ immediately after ':'.
+                                    if tail.starts_with('$') || tail.starts_with('\\') {
+                                        return abs_pos;
+                                    }
+                                }
+                            }
+                        }
                         // Inline bold — skip past closing **
                         search_start = abs_pos + 2 + close_pos + 2;
                         continue;
                     }
-                    // Closing ** is followed by ':' — this is a function spec; fall through
+                    // Closing ** is followed by ':' — function spec unless it's a known non-function header
+                    let bold = &after[..close_pos];
+                    if bold == "Definition" {
+                        search_start = abs_pos + 2 + close_pos + 2;
+                        continue;
+                    }
                 }
                 None => {
                     // Unclosed ** marker — skip past it
@@ -761,7 +800,9 @@ impl SpecParser {
         // Also try "**Properties**:" with optional space before colon (spec format variation)
         let props_start = block_content
             .find("**Properties**:")
-            .or_else(|| block_content.find("**Properties** :"));
+            .or_else(|| block_content.find("**Properties** :"))
+            .or_else(|| block_content.find("**Properties** (Updated):"))
+            .or_else(|| block_content.find("**Properties** (Updated) :"));
         if let Some(props_start) = props_start {
             let props_section = &block_content[props_start..];
             for cap in property_re.captures_iter(props_section) {

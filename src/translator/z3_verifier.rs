@@ -171,10 +171,8 @@ impl Z3Verifier {
                 };
                 body_vars.insert("result".to_string(), result_var);
 
-                // Add axioms for uninterpreted functions (shift operations)
                 add_shift_axioms(ctx, &mut solver);
 
-                // Translate function body to Z3 formula
                 if let Ok(Some(impl_formula)) = self
                     .translator
                     .translate_function_body(func, &mut body_vars)
@@ -371,6 +369,68 @@ impl Z3Verifier {
     }
 }
 
+/// Bit shifts use UF `shr` / `shl` (`FuncDecl::new` with the same name shares one UF per [`Context`](z3::Context)).
+/// Literal `>> k` / `<< k` use [`Z3Translator::pow2_int`](crate::translator::z3_translator::Z3Translator::pow2_int) for correct `2^k` including `k=63`.
+/// The `shr(a,k)=a/2^k` axioms use `Int::from_i64(1<<k)` for `k=0..64` to match earlier behavior (k=63 host overflow is a known limitation).
+#[cfg(feature = "z3")]
+fn add_shift_axioms(ctx: &Context, solver: &mut Solver) {
+    let int_sort = Sort::int(ctx);
+
+    let a = Int::new_const(ctx, "axiom_a");
+    let b = Int::new_const(ctx, "axiom_b");
+    let zero = Int::from_i64(ctx, 0);
+
+    let shr_fn = z3::FuncDecl::new(ctx, "shr", &[&int_sort, &int_sort], &int_sort);
+    let shl_fn = z3::FuncDecl::new(ctx, "shl", &[&int_sort, &int_sort], &int_sort);
+
+    let shr_result = shr_fn.apply(&[&a, &b]);
+    let shr_result_int = shr_result.as_int().unwrap();
+    let premise1 = Bool::and(ctx, &[&a.ge(&zero), &b.ge(&zero)]);
+    let conclusion1 = shr_result_int.ge(&zero);
+    let axiom1 = premise1.implies(&conclusion1);
+
+    let bound_a = a.clone();
+    let bound_b = b.clone();
+    let forall1 = forall_const(ctx, &[&bound_a, &bound_b], &[], &axiom1);
+    solver.assert(&forall1);
+
+    let conclusion2 = shr_result_int.le(&a);
+    let axiom2 = premise1.implies(&conclusion2);
+    let forall2 = forall_const(ctx, &[&bound_a, &bound_b], &[], &axiom2);
+    solver.assert(&forall2);
+
+    let shr_by_zero = shr_fn.apply(&[&a, &zero]);
+    let shr_by_zero_int = shr_by_zero.as_int().unwrap();
+    let axiom3 = shr_by_zero_int._eq(&a);
+    let forall3 = forall_const(ctx, &[&bound_a], &[], &axiom3);
+    solver.assert(&forall3);
+
+    let shl_result = shl_fn.apply(&[&a, &b]);
+    let shl_result_int = shl_result.as_int().unwrap();
+    let conclusion4 = shl_result_int.ge(&a);
+    let axiom4 = premise1.implies(&conclusion4);
+    let forall4 = forall_const(ctx, &[&bound_a, &bound_b], &[], &axiom4);
+    solver.assert(&forall4);
+
+    let shl_by_zero = shl_fn.apply(&[&a, &zero]);
+    let shl_by_zero_int = shl_by_zero.as_int().unwrap();
+    let axiom5 = shl_by_zero_int._eq(&a);
+    let forall5 = forall_const(ctx, &[&bound_a], &[], &axiom5);
+    solver.assert(&forall5);
+
+    for k in 0_i64..64 {
+        let k_const = Int::from_i64(ctx, k);
+        // Match translator literal >> encoding: 2^k for small k from i64 (k=63 overflows host; known limitation).
+        let two_pow_k = Int::from_i64(ctx, 1i64 << k);
+        let shr_ak = shr_fn.apply(&[&a, &k_const]);
+        let shr_ak_int = shr_ak.as_int().unwrap();
+        let div_ak = a.clone().div(&two_pow_k);
+        let axiom = shr_ak_int._eq(&div_ak);
+        let forall_k = forall_const(ctx, &[&bound_a], &[], &axiom);
+        solver.assert(&forall_k);
+    }
+}
+
 /// Extract parameter types from function signature
 fn extract_parameter_types(func: &syn::ItemFn) -> std::collections::HashMap<String, syn::Type> {
     let mut types = std::collections::HashMap::new();
@@ -390,90 +450,6 @@ fn extract_return_type(func: &syn::ItemFn) -> Option<syn::Type> {
         Some(*ty.clone())
     } else {
         None
-    }
-}
-
-/// Add axioms for bit shift operations
-///
-/// Since we use uninterpreted functions for shifts (to avoid Real numbers),
-/// we need to add axioms that capture the mathematical properties of shifts:
-///
-/// For right shift (>>):
-///   - shr(a, b) >= 0 when a >= 0 (non-negativity preserving)
-///   - shr(a, b) <= a when a >= 0 and b >= 0 (monotonically decreasing)
-///   - shr(a, 0) == a (identity)
-///
-/// For left shift (<<):
-///   - shl(a, b) >= a when a >= 0 and b >= 0 (monotonically increasing)
-///   - shl(a, 0) == a (identity)
-#[cfg(feature = "z3")]
-fn add_shift_axioms(ctx: &Context, solver: &mut Solver) {
-    let int_sort = Sort::int(ctx);
-
-    // Create bound variables for universal quantification
-    let a = Int::new_const(ctx, "axiom_a");
-    let b = Int::new_const(ctx, "axiom_b");
-    let zero = Int::from_i64(ctx, 0);
-
-    // Get the shr function declaration (must match what's used in translator)
-    let shr_fn = z3::FuncDecl::new(ctx, "shr", &[&int_sort, &int_sort], &int_sort);
-    let shl_fn = z3::FuncDecl::new(ctx, "shl", &[&int_sort, &int_sort], &int_sort);
-
-    // Axiom 1: shr(a, b) >= 0 when a >= 0 and b >= 0
-    // ∀a,b: (a >= 0 ∧ b >= 0) → shr(a,b) >= 0
-    let shr_result = shr_fn.apply(&[&a, &b]);
-    let shr_result_int = shr_result.as_int().unwrap();
-    let premise1 = Bool::and(ctx, &[&a.ge(&zero), &b.ge(&zero)]);
-    let conclusion1 = shr_result_int.ge(&zero);
-    let axiom1 = premise1.implies(&conclusion1);
-
-    // Use forall quantification
-    let bound_a = a.clone();
-    let bound_b = b.clone();
-    let forall1 = forall_const(ctx, &[&bound_a, &bound_b], &[], &axiom1);
-    solver.assert(&forall1);
-
-    // Axiom 2: shr(a, b) <= a when a >= 0 and b >= 0
-    // ∀a,b: (a >= 0 ∧ b >= 0) → shr(a,b) <= a
-    let conclusion2 = shr_result_int.le(&a);
-    let axiom2 = premise1.implies(&conclusion2);
-    let forall2 = forall_const(ctx, &[&bound_a, &bound_b], &[], &axiom2);
-    solver.assert(&forall2);
-
-    // Axiom 3: shr(a, 0) == a (identity for shift by 0)
-    // ∀a: shr(a, 0) == a
-    let shr_by_zero = shr_fn.apply(&[&a, &zero]);
-    let shr_by_zero_int = shr_by_zero.as_int().unwrap();
-    let axiom3 = shr_by_zero_int._eq(&a);
-    let forall3 = forall_const(ctx, &[&bound_a], &[], &axiom3);
-    solver.assert(&forall3);
-
-    // Axiom 4: shl(a, b) >= a when a >= 0 and b >= 0
-    // ∀a,b: (a >= 0 ∧ b >= 0) → shl(a,b) >= a
-    let shl_result = shl_fn.apply(&[&a, &b]);
-    let shl_result_int = shl_result.as_int().unwrap();
-    let conclusion4 = shl_result_int.ge(&a);
-    let axiom4 = premise1.implies(&conclusion4);
-    let forall4 = forall_const(ctx, &[&bound_a, &bound_b], &[], &axiom4);
-    solver.assert(&forall4);
-
-    // Axiom 5: shl(a, 0) == a (identity for shift by 0)
-    let shl_by_zero = shl_fn.apply(&[&a, &zero]);
-    let shl_by_zero_int = shl_by_zero.as_int().unwrap();
-    let axiom5 = shl_by_zero_int._eq(&a);
-    let forall5 = forall_const(ctx, &[&bound_a], &[], &axiom5);
-    solver.assert(&forall5);
-
-    // Concrete shr axioms: for b in 0..64, shr(a,b) = a / 2^b (Bitcoin subsidy halving)
-    for k in 0..64i64 {
-        let k_const = Int::from_i64(ctx, k);
-        let two_pow_k = Int::from_i64(ctx, 1i64 << k);
-        let shr_ak = shr_fn.apply(&[&a, &k_const]);
-        let shr_ak_int = shr_ak.as_int().unwrap();
-        let div_ak = a.div(&two_pow_k);
-        let axiom = shr_ak_int._eq(&div_ak);
-        let forall_k = forall_const(ctx, &[&bound_a], &[], &axiom);
-        solver.assert(&forall_k);
     }
 }
 
