@@ -1090,6 +1090,11 @@ impl SpecParser {
         // Then replace plain function name (but not if it's part of a larger word)
         rust_expr = rust_expr.replace(func_name, "result");
 
+        // §5.1.1 heading **SighashScriptCodeWithSigVersion** but properties still spell the 5-arg overload `\text{SighashScriptCode}(...)`.
+        if func_name == "SighashScriptCodeWithSigVersion" {
+            rust_expr = rust_expr.replace("SighashScriptCode", "result");
+        }
+
         // Replace mathematical operators
         rust_expr = rust_expr.replace("≥", ">=");
         rust_expr = rust_expr.replace("≤", "<=");
@@ -1135,7 +1140,12 @@ impl SpecParser {
 
         // Remove LaTeX formatting (do this last)
         rust_expr = rust_expr.replace("$", "");
-        rust_expr = rust_expr.replace(r"\text{", "");
+        // Expand `\text{Name}` to `Name` as a unit. Stripping only `\text{` leaves a stray `}`
+        // before `(` (e.g. `\text{SighashScriptCode}(tx,...)` → `SighashScriptCode}(tx,...)`),
+        // which breaks drift / lexer parsing for contracts under a differently named heading.
+        if let Ok(re) = Regex::new(r"\\text\{([^}]*)\}") {
+            rust_expr = re.replace_all(&rust_expr, "$1").to_string();
+        }
         rust_expr = rust_expr.replace(r"\{", "{");
         rust_expr = rust_expr.replace(r"\}", "}");
 

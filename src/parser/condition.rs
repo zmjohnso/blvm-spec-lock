@@ -111,6 +111,7 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         cond = re.replace_all(&cond, "result(ss, spk, w, f)").to_string();
     }
     cond = cond.replace(r"{Some}(\mathcal{UC}), None}}", "{Some, None}");
+    cond = cond.replace(r"{Some(\mathcal{UC}), None}", "{Some, None}");
     cond = cond.replace("{Some}(...), None}}", "{Some, None}");
     cond = cond.replace(
         r"{(valid}, \mathcal{US}), (invalid}, \mathcal{US})}",
@@ -124,6 +125,10 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         r"{(\mathcal{B}, success}), (\mathcal{B}, failure})}",
         "{success, failure}",
     );
+    cond = cond.replace(
+        r"{(\mathcal{B}, success), (\mathcal{B}, failure)}",
+        "{success, failure}",
+    );
     // CheckTxInputs: {(valid, Z), (invalid, 0)} -> valid/invalid
     cond = cond.replace(r"{(valid}, \mathbb{Z}), (invalid}, 0)}", "{valid, invalid}");
     cond = cond.replace(r"{(valid, \mathbb{Z}), (invalid, 0)}", "{valid, invalid}");
@@ -131,6 +136,14 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     // Bare "true" is parseable
     if cond == "true" || cond == "true}" {
         return Some("true".to_string());
+    }
+    // EvalScript properties cite VerifyScript(...) ∈ {true, false}
+    if cond.contains("VerifyScript")
+        && cond.contains(r"\in")
+        && cond.contains("true")
+        && cond.contains("false")
+    {
+        return Some("(result == true || result == false)".to_string());
     }
     // Early: result(...) \in {true, false} with any args (including nested) - before core extraction
     if cond.contains("result") && cond.contains(r"\in {true") && cond.contains("false") {
