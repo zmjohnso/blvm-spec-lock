@@ -191,36 +191,37 @@ pub fn enrich_functions_with_spec(
                 }
             }
 
+            // The spec has contracts for this section but none produced a parseable
+            // Rust expression.  Use a labeled placeholder instead of ensures(true)
+            // so the gap is visible in drift/verify output rather than silently passing.
             if !added_any && !spec_func.contracts.is_empty() {
-                if let Ok(expr) = syn::parse_str::<syn::Expr>("true") {
-                    func.contracts.push(Contract {
-                        contract_type: ContractType::Ensures,
-                        condition: "true".to_string(),
-                        expr: Some(expr),
-                        is_spec_derived: true,
-                    });
-                    enriched_count += 1;
-                }
+                func.contracts.push(Contract {
+                    contract_type: ContractType::Ensures,
+                    condition: "no parseable spec contracts".to_string(),
+                    expr: None,
+                    is_spec_derived: true,
+                });
+                enriched_count += 1;
             }
         }
 
-        // Fallback: spec has no parseable contracts for this section (e.g. complex math only).
-        // Add default ensures(true) so verification doesn't fail with "no contracts".
-        // Keeps Orange Paper focused on math; tooling handles the rest.
+        // Fallback: spec section exists but has no parseable contracts (e.g. complex LaTeX only).
+        // Use a clearly-labelled placeholder rather than silent ensures(true) so that
+        // drift and verify JSON output surface the gap explicitly.
+        // The placeholder condition "no parseable spec contracts" does not parse as a Rust expr,
+        // so verify will produce a Partial(UnsupportedTranslation) result — not a silent pass.
         if func.contracts.is_empty()
             && func.section.is_some()
             && func.formula_anchor.is_none()
             && func.constant_anchor.is_none()
         {
-            if let Ok(expr) = syn::parse_str::<syn::Expr>("true") {
-                func.contracts.push(Contract {
-                    contract_type: ContractType::Ensures,
-                    condition: "true".to_string(),
-                    expr: Some(expr),
-                    is_spec_derived: true,
-                });
-                enriched_count += 1;
-            }
+            func.contracts.push(Contract {
+                contract_type: ContractType::Ensures,
+                condition: "no parseable spec contracts".to_string(),
+                expr: None,
+                is_spec_derived: true,
+            });
+            enriched_count += 1;
         }
     }
 

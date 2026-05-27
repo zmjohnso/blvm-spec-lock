@@ -3,7 +3,7 @@
 //! Detects when Orange Paper and implementation diverge
 
 use super::verify::{discover_functions, FunctionToVerify};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 // Note: SpecParser is not accessible from binary (proc-macro crate limitation)
 // Using simplified drift detection for now
 
@@ -61,7 +61,7 @@ pub struct MismatchedContract {
 ///
 /// **`scoped_formulas`**: same prefix rule applies to **`F_*`** **Formula** **`latex_body`** rows.
 pub fn detect_drift(
-    workspace_root: &PathBuf,
+    workspace_root: &Path,
     orange_paper_paths: Option<&[PathBuf]>,
     scoped_unparseables: bool,
     scoped_formulas: bool,
@@ -71,9 +71,30 @@ pub fn detect_drift(
 
     let mut functions = discover_functions(workspace_root)?;
 
-    let spec_paths: Vec<PathBuf> = orange_paper_paths
-        .map(|p| p.to_vec())
-        .unwrap_or_else(|| vec![workspace_root.join("../blvm-spec/THE_ORANGE_PAPER.md")]);
+    let spec_paths: Vec<PathBuf> = orange_paper_paths.map(|p| p.to_vec()).unwrap_or_else(|| {
+        // Default to the split spec files used by CI (PROTOCOL.md + ARCHITECTURE.md).
+        // Fall back to THE_ORANGE_PAPER.md if neither split file exists, and warn.
+        let protocol = workspace_root.join("../blvm-spec/PROTOCOL.md");
+        let architecture = workspace_root.join("../blvm-spec/ARCHITECTURE.md");
+        if protocol.exists() || architecture.exists() {
+            vec![protocol, architecture]
+        } else {
+            let fallback = workspace_root.join("../blvm-spec/THE_ORANGE_PAPER.md");
+            if !fallback.exists() {
+                eprintln!(
+                    "warning: no spec files found at default paths \
+                         (PROTOCOL.md, ARCHITECTURE.md, THE_ORANGE_PAPER.md). \
+                         Pass --spec-path explicitly."
+                );
+            } else {
+                eprintln!(
+                    "warning: using THE_ORANGE_PAPER.md fallback; \
+                         prefer split PROTOCOL.md + ARCHITECTURE.md to match CI."
+                );
+            }
+            vec![fallback]
+        }
+    });
 
     // Enrich functions with spec-derived contracts before drift check.
     // Without this, #[spec_locked] functions have empty contracts (macro output not in parsed source).
@@ -81,7 +102,7 @@ pub fn detect_drift(
         let _ = super::spec_enrich::enrich_functions_with_spec(&mut functions, &spec_paths);
     }
 
-    let mismatched_contracts = Vec::new();
+    let mut mismatched_contracts = Vec::new();
     let mut missing_from_spec = Vec::new();
     let mut auto_inferred = Vec::new();
     let mut unparseable_spec_contracts = Vec::new();
@@ -94,6 +115,41 @@ pub fn detect_drift(
         }
         if func.contracts.is_empty() {
             missing_from_spec.push(func.clone());
+            continue;
+        }
+
+        // Compare manually-written contracts against spec-derived contracts.
+        // If a manual contract has no similar spec counterpart of the same type,
+        // it represents drift from the Orange Paper.
+        let manual: Vec<_> = func
+            .contracts
+            .iter()
+            .filter(|c| !c.is_spec_derived)
+            .collect();
+        let spec: Vec<_> = func
+            .contracts
+            .iter()
+            .filter(|c| c.is_spec_derived)
+            .collect();
+
+        if !manual.is_empty() && !spec.is_empty() {
+            for m in &manual {
+                let has_match = spec.iter().any(|s| {
+                    s.contract_type == m.contract_type
+                        && contracts_similar(&s.condition, &m.condition)
+                });
+                if !has_match {
+                    // Find the first spec contract of the same type for the mismatch report.
+                    if let Some(s) = spec.iter().find(|s| s.contract_type == m.contract_type) {
+                        mismatched_contracts.push(MismatchedContract {
+                            function: func.clone(),
+                            orange_paper_contract: s.condition.clone(),
+                            implementation_contract: m.condition.clone(),
+                            section: func.section.clone().unwrap_or_default(),
+                        });
+                    }
+                }
+            }
         }
     }
 

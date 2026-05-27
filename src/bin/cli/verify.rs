@@ -3,10 +3,9 @@
 //! Discovers functions, extracts contracts, and runs verification
 
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use syn::{Attribute, File, ImplItem, ImplItemFn, ItemFn};
-use walkdir::WalkDir;
 
 /// Convert ImplItemFn to ItemFn so Z3 can translate the function body.
 /// Enables implementation validation for impl-block methods.
@@ -106,25 +105,37 @@ pub struct FunctionToVerify {
     pub function_sig: Option<syn::ItemFn>, // Store function signature for type inference
 }
 
+/// Recursively collect all `.rs` files under `dir`, skipping `target/`, `.git/`, `.cargo/`.
+fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let path_str = path.to_string_lossy();
+        if path_str.contains("/target/")
+            || path_str.contains("/.git/")
+            || path_str.contains("/.cargo/")
+        {
+            continue;
+        }
+        if path.is_dir() {
+            collect_rs_files(&path, out);
+        } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+            out.push(path);
+        }
+    }
+}
+
 /// Discover all functions with #[spec_locked] attributes
-pub fn discover_functions(workspace_root: &PathBuf) -> Result<Vec<FunctionToVerify>, String> {
+pub fn discover_functions(workspace_root: &Path) -> Result<Vec<FunctionToVerify>, String> {
     let mut functions = Vec::new();
     let mut errors = Vec::new();
 
-    // Walk through Rust source files
-    for entry in WalkDir::new(workspace_root)
-        .into_iter()
-        .filter_entry(|e| {
-            let path = e.path();
-            // Skip target directory and other build artifacts
-            !path.to_string_lossy().contains("/target/")
-                && !path.to_string_lossy().contains("/.git/")
-                && !path.to_string_lossy().contains("/.cargo/")
-        })
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
+    let mut rs_files = Vec::new();
+    collect_rs_files(workspace_root, &mut rs_files);
 
+    for path in &rs_files {
         // Only process .rs files
         if path.extension().and_then(|s| s.to_str()) == Some("rs") {
             match parse_file_for_functions(path) {
@@ -524,10 +535,15 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
     }
 
     // Early return if requires contracts failed.
-    // If all failures are from spec-derived contracts, demote to Partial (best-effort).
+    // Demote to Partial only when ALL failures are from spec-derived contracts AND
+    // are translation gaps (parse failures). A Z3 counterexample on a spec-derived
+    // contract is a real failure — the implementation diverges from the spec.
     if !failed_contracts.is_empty() {
         let all_spec_derived = failed_contracts.iter().all(|(_, _, sd)| *sd);
-        if all_spec_derived {
+        let all_translation_gaps = failed_contracts
+            .iter()
+            .all(|(_, reason, _)| reason.contains("could not be parsed"));
+        if all_spec_derived && all_translation_gaps {
             return VerificationResult::Partial {
                 verified: verified_count,
                 total: function.contracts.len(),
@@ -647,11 +663,15 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
     }
 
     // Report results.
-    // If all failures came from spec-derived (auto-enriched) contracts, demote to Partial.
-    // Only manually-written #[requires]/#[ensures] contracts produce Failed.
+    // Demote to Partial only when ALL failures are spec-derived translation gaps.
+    // A Z3 counterexample on a spec-derived contract means the implementation diverges
+    // from the spec and must be treated as Failed even under SPEC_LOCK_STRICT.
     if !failed_contracts.is_empty() {
         let all_spec_derived = failed_contracts.iter().all(|(_, _, sd)| *sd);
-        if all_spec_derived {
+        let all_translation_gaps = failed_contracts
+            .iter()
+            .all(|(_, reason, _)| reason.contains("could not be parsed"));
+        if all_spec_derived && all_translation_gaps {
             return VerificationResult::Partial {
                 verified: verified_count,
                 total: function.contracts.len(),

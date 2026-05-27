@@ -142,7 +142,7 @@ pub struct CoverageStats {
 
 /// Generate coverage report. When spec_paths is provided, enriches functions with spec-derived contracts first.
 pub fn generate_coverage(
-    workspace_root: &PathBuf,
+    workspace_root: &Path,
     spec_paths: Option<&[PathBuf]>,
     rollup_from_verify_json: Option<&Path>,
 ) -> Result<CoverageStats, String> {

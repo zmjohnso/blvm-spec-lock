@@ -118,14 +118,16 @@ Per-function solver time can be raised with **`--timeout <secs>`** on **`verify`
 
 ### Exit codes (`cargo spec-lock verify`)
 
-| Condition | Default (no strict) | `--strict` or `SPEC_LOCK_STRICT=1` |
-|-----------|---------------------|--------------------------------------|
-| Any **Failed** | 1 | 1 |
-| Any **NoContracts** | 1 | 1 |
-| Any **Partial** (and no failures above) | 0 | 1 |
-| All **Passed** | 0 | 0 |
+| Condition | Exit code |
+|-----------|-----------|
+| Any **Failed** | 1 |
+| Any **NoContracts** | 1 |
+| Any **Partial** (and no failures above) | 0 |
+| All **Passed** | 0 |
 
-**Strict mode** — **`--strict`** or **`SPEC_LOCK_STRICT=1`**: treat **Partial** as a failing outcome (exit **1**) so CI does not green-light incomplete Z3 coverage. **NoContracts** and **Failed** fail the process regardless of strict. See **[VERIFY_JSON.md](VERIFY_JSON.md)** for the structured report alongside exit codes.
+**`Partial` semantics (updated):** A `Partial` result is emitted only when a spec-derived contract could not be translated into a verifiable expression (parse gap, unsupported LaTeX construct). A Z3 counterexample on a spec-derived contract produces **`Failed`** (exit 1) — the implementation diverges from the spec.
+
+`--strict` / `SPEC_LOCK_STRICT=1` is accepted for backward compatibility but no longer changes exit behaviour for `Partial` results, since `Partial` is now restricted to genuine translation gaps that cannot be resolved without improving the LaTeX parser. Counterexamples always exit 1 regardless of strict. **NoContracts** and **Failed** fail the process unconditionally. See **[VERIFY_JSON.md](VERIFY_JSON.md)** for the structured report alongside exit codes.
 
 ## Section Matching
 
