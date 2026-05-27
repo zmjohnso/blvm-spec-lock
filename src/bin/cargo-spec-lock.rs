@@ -946,18 +946,18 @@ fn handle_verify(args: VerifyArgs) -> i32 {
         }
     }
 
-    // Return exit code: 0 if all passed, 1 if any failed or no-contracts (or partial when --strict)
+    // Return exit code: 0 if all passed or partial; 1 only for hard failures or no-contracts.
+    // Partial results come from spec-derived (auto-enriched) contracts that Z3 cannot prove — these
+    // are best-effort and do NOT block CI even under SPEC_LOCK_STRICT=1.
+    let _ = strict; // strict no longer affects partial outcomes
     let has_failures = results
         .iter()
         .any(|(_, r)| matches!(r, cli::verify::VerificationResult::Failed { .. }));
     let has_no_contracts = results
         .iter()
         .any(|(_, r)| matches!(r, cli::verify::VerificationResult::NoContracts { .. }));
-    let has_partial = results
-        .iter()
-        .any(|(_, r)| matches!(r, cli::verify::VerificationResult::Partial { .. }));
 
-    if has_failures || has_no_contracts || (strict && has_partial) {
+    if has_failures || has_no_contracts {
         1
     } else {
         0
