@@ -38,8 +38,8 @@ fn extract_formulas_smoke_matches_snapshot() {
         "extract-formulas must exit 0 for snapshot regeneration"
     );
 
-    let generated = std::fs::read_to_string(&out)
-        .unwrap_or_else(|e| panic!("read {}: {e}", out.display()));
+    let generated =
+        std::fs::read_to_string(&out).unwrap_or_else(|e| panic!("read {}: {e}", out.display()));
     let _ = std::fs::remove_file(&out);
 
     insta::assert_snapshot!("extract_formulas_smoke_generated", generated);

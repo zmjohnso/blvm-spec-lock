@@ -387,13 +387,12 @@ pub fn format_drift_human(result: &DriftResult) -> String {
     }
 
     if !result.unparseable_formulas.is_empty() {
-        output.push_str("⚠️  Unparseable **Formula** (`F_*`) bodies (enrich/verify parse gate failed):\n");
+        output.push_str(
+            "⚠️  Unparseable **Formula** (`F_*`) bodies (enrich/verify parse gate failed):\n",
+        );
         output.push_str("------------------------------------------------------------------\n");
         for u in result.unparseable_formulas.iter().take(10) {
-            output.push_str(&format!(
-                "  {} §{}: {}\n",
-                u.id, u.section, u.body_preview
-            ));
+            output.push_str(&format!("  {} §{}: {}\n", u.id, u.section, u.body_preview));
         }
         if result.unparseable_formulas.len() > 10 {
             output.push_str(&format!(

@@ -250,7 +250,9 @@ impl Z3Verifier {
         solver.assert(&pos);
         match solver.check() {
             SatResult::Sat => VerificationResult::Verified,
-            SatResult::Unsat => VerificationResult::Failed { counterexample: None },
+            SatResult::Unsat => VerificationResult::Failed {
+                counterexample: None,
+            },
             SatResult::Unknown => VerificationResult::Unknown {
                 reason: "Z3 Unknown (formula satisfiability smoke)".to_string(),
             },

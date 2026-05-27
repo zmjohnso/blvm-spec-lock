@@ -29,23 +29,15 @@ fn canonical_cycle_rotation(cycle: Vec<String>) -> Vec<String> {
 
 /// Directed edges: **`F_u` → `F_v`** when **`u.depends_on`** contains **`v`** and both exist in **`formulas`**.
 pub fn find_formula_id_cycles(formulas: &HashMap<String, FormulaSpec>) -> Vec<Vec<String>> {
-    let mut color: HashMap<String, Color> = formulas
-        .keys()
-        .map(|k| (k.clone(), Color::White))
-        .collect();
+    let mut color: HashMap<String, Color> =
+        formulas.keys().map(|k| (k.clone(), Color::White)).collect();
 
     let mut stack: Vec<String> = Vec::new();
     let mut raw_cycles: Vec<Vec<String>> = Vec::new();
 
     for start in formulas.keys().cloned().collect::<Vec<_>>() {
         if color.get(&start).copied().unwrap_or(Color::White) == Color::White {
-            visit_dfs(
-                &start,
-                formulas,
-                &mut color,
-                &mut stack,
-                &mut raw_cycles,
-            );
+            visit_dfs(&start, formulas, &mut color, &mut stack, &mut raw_cycles);
         }
     }
 

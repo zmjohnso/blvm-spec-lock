@@ -459,15 +459,18 @@ fn handle_list_formulas(spec_paths: Vec<PathBuf>) -> i32 {
                 let mut formulas: Vec<_> = parser.formulas().values().collect();
                 formulas.sort_by(|a, b| a.id.cmp(&b.id));
                 for f in formulas {
-                    let condensed: String =
-                        f.latex_body.split_whitespace().collect::<Vec<_>>().join(" ");
+                    let condensed: String = f
+                        .latex_body
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     let deps = f.depends_on.join(",");
-                    let gate = if crate::cli::drift::formula_latex_parseable_for_verify(&f.latex_body)
-                    {
-                        "ok"
-                    } else {
-                        "fail"
-                    };
+                    let gate =
+                        if crate::cli::drift::formula_latex_parseable_for_verify(&f.latex_body) {
+                            "ok"
+                        } else {
+                            "fail"
+                        };
                     let missing_f_refs: String = f
                         .depends_on
                         .iter()
@@ -812,7 +815,8 @@ fn handle_verify(args: VerifyArgs) -> i32 {
         format_formula_verify_human, format_verify_json_report, FormulaVerifyJsonFlags,
     };
 
-    let mut formula_registry_for_json: Option<(FormulaRegistryAnalysis, FormulaVerifyJsonFlags)> = None;
+    let mut formula_registry_for_json: Option<(FormulaRegistryAnalysis, FormulaVerifyJsonFlags)> =
+        None;
 
     if !spec_paths.is_empty() {
         if let Ok(parser) = parser::orange_paper::SpecParser::from_paths(&spec_paths) {
@@ -910,9 +914,7 @@ fn handle_verify(args: VerifyArgs) -> i32 {
     let printed = match format {
         OutputFormat::Json => cli::output::format_verify_json_report(
             &results,
-            formula_registry_for_json
-                .as_ref()
-                .map(|(a, f)| (a, *f)),
+            formula_registry_for_json.as_ref().map(|(a, f)| (a, *f)),
         ),
         _ => cli::output::format_results(&results, format_str),
     };
@@ -921,9 +923,7 @@ fn handle_verify(args: VerifyArgs) -> i32 {
     if let Some(ref path) = json_out {
         let json = cli::output::format_verify_json_report(
             &results,
-            formula_registry_for_json
-                .as_ref()
-                .map(|(a, f)| (a, *f)),
+            formula_registry_for_json.as_ref().map(|(a, f)| (a, *f)),
         );
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -972,7 +972,9 @@ fn handle_verify_formulas(
         analyze_formula_registry, registry_has_blocking_static_failure,
         registry_has_blocking_z3_outcome, FormulaAnalyzeConfig,
     };
-    use crate::cli::output::{format_formula_verify_human, format_formula_verify_json_report, FormulaVerifyJsonFlags};
+    use crate::cli::output::{
+        format_formula_verify_human, format_formula_verify_json_report, FormulaVerifyJsonFlags,
+    };
     use crate::parser::orange_paper::SpecParser;
 
     if spec_paths.is_empty() {
@@ -1042,17 +1044,19 @@ fn handle_verify_formulas(
             }
         }
         if let Err(e) = std::fs::write(path, json_doc.as_bytes()) {
-            eprintln!("Error writing verify-formulas --json-out {}: {}", path.display(), e);
+            eprintln!(
+                "Error writing verify-formulas --json-out {}: {}",
+                path.display(),
+                e
+            );
             return 1;
         }
     }
 
     let fail_static = registry_has_blocking_static_failure(&analysis);
     let fail_z3 = want_z3 && registry_has_blocking_z3_outcome(&analysis);
-    let cannot_run_requested_z3 = z3_requested
-        && !cfg!(feature = "z3")
-        && formulas_len > 0
-        && !fail_static;
+    let cannot_run_requested_z3 =
+        z3_requested && !cfg!(feature = "z3") && formulas_len > 0 && !fail_static;
     if cannot_run_requested_z3 {
         eprintln!(
             "verify-formulas: Z3 SAT smoke was requested — rebuild **`cargo-spec-lock`** with **`--features z3`** (or pass **`--skip-z3`** for static-only)."
@@ -1068,8 +1072,8 @@ fn handle_verify_formulas(
 fn handle_check_formulas(spec_paths: Vec<PathBuf>, z3_sat: bool, timeout_secs: u64) -> i32 {
     use crate::cli::formula_checks::{
         analyze_formula_registry, registry_has_blocking_static_failure,
-        registry_has_blocking_z3_outcome, FormulaAnalyzeConfig,
-        FormulaStaticOutcome, Z3FormulaPhase,
+        registry_has_blocking_z3_outcome, FormulaAnalyzeConfig, FormulaStaticOutcome,
+        Z3FormulaPhase,
     };
     use crate::parser::orange_paper::SpecParser;
 

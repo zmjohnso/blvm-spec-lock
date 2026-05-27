@@ -20,11 +20,7 @@ fn unique_extract_out(name: &str) -> PathBuf {
 fn extract_formulas_exits_zero_and_emits_subsidy_helper_skeleton() {
     let spec =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/extract_formulas_smoke.md");
-    assert!(
-        spec.exists(),
-        "fixture missing: {}",
-        spec.display()
-    );
+    assert!(spec.exists(), "fixture missing: {}", spec.display());
 
     let out = unique_extract_out("formulas");
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -57,7 +53,8 @@ fn extract_formulas_exits_zero_and_emits_subsidy_helper_skeleton() {
         "expected stderr success line\ngot:\n{stderr}",
     );
 
-    let rust = std::fs::read_to_string(&out).unwrap_or_else(|e| panic!("read {}: {e}", out.display()));
+    let rust =
+        std::fs::read_to_string(&out).unwrap_or_else(|e| panic!("read {}: {e}", out.display()));
     let _ = std::fs::remove_file(&out);
 
     assert!(
@@ -119,7 +116,8 @@ fn extract_property_tests_exits_zero_round_trip_with_bindings() {
         "expected stderr success line for one round-trip row\ngot:\n{stderr}",
     );
 
-    let rust = std::fs::read_to_string(&out).unwrap_or_else(|e| panic!("read {}: {e}", out.display()));
+    let rust =
+        std::fs::read_to_string(&out).unwrap_or_else(|e| panic!("read {}: {e}", out.display()));
     let _ = std::fs::remove_file(&out);
 
     assert!(

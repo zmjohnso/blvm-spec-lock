@@ -320,7 +320,8 @@ fn generate_ensures(spec: &FunctionSpec, func: &syn::ItemFn) -> TokenStream {
         for property in &spec.properties {
             if matches!(
                 property.property_type,
-                blvm_spec_lock_core::parser::PropertyType::Ensures | blvm_spec_lock_core::parser::PropertyType::Invariant
+                blvm_spec_lock_core::parser::PropertyType::Ensures
+                    | blvm_spec_lock_core::parser::PropertyType::Invariant
             ) {
                 // Translate mathematical notation to Rust contract
                 let rust_expr =
@@ -509,17 +510,11 @@ pub fn process_spec_locked(
 
     // Phase 5 — explicit **`Formula`** anchors **`F_*`** (never match **`Function`** entries).
     let is_formula_anchor = func_name.strip_prefix("F_").is_some_and(|rest| {
-        !rest.is_empty()
-            && rest
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
     });
 
     let is_constant_anchor = func_name.strip_prefix("C_").is_some_and(|rest| {
-        !rest.is_empty()
-            && rest
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
     });
 
     // NEW: Auto-inference logic - if no section provided, search everywhere

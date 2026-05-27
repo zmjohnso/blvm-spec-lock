@@ -203,8 +203,7 @@ impl Lexer {
         if c == '\\' {
             if let Some(cmd) = self.read_backslash_command() {
                 match cmd.as_str() {
-                    "text" | "mathrm" | "mathit" | "mathbf" | "mathsf" =>
-                    {
+                    "text" | "mathrm" | "mathit" | "mathbf" | "mathsf" => {
                         #[allow(clippy::collapsible_match)]
                         if self.peek() == Some('{') {
                             if let Some(inner) = self.read_curly_content() {
@@ -360,7 +359,9 @@ mod tests {
         );
         assert!(tokens.contains(&Token::Op("<=".into())));
         assert!(
-            tokens.iter().any(|t| matches!(t, Token::Ident(i) if i == "subsidy")),
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Ident(i) if i == "subsidy")),
             "{tokens:?}"
         );
     }
@@ -369,11 +370,7 @@ mod tests {
     fn test_lex_unary_negative_number() {
         let mut lex = Lexer::new("-1 <= height");
         let tokens = lex.lex();
-        assert_eq!(
-            tokens[0],
-            Token::Number("-1".into()),
-            "{tokens:?}"
-        );
+        assert_eq!(tokens[0], Token::Number("-1".into()), "{tokens:?}");
         assert!(matches!(tokens[1], Token::Op(ref s) if s == "<="));
     }
 

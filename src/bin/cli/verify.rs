@@ -281,13 +281,17 @@ pub enum SecondarySpecAnchor {
 fn classify_secondary_anchor(id: &str) -> Option<SecondarySpecAnchor> {
     if id.starts_with("F_")
         && id.len() > 2
-        && id[2..].chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && id[2..]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
         return Some(SecondarySpecAnchor::Formula(id.to_string()));
     }
     if id.starts_with("C_")
         && id.len() > 2
-        && id[2..].chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && id[2..]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
         return Some(SecondarySpecAnchor::Constant(id.to_string()));
     }
@@ -984,9 +988,7 @@ pub enum VerificationResult {
 
 #[cfg(test)]
 mod spec_locked_anchor_extract_tests {
-    use super::{
-        extract_constant_anchor, extract_formula_anchor, extract_section,
-    };
+    use super::{extract_constant_anchor, extract_formula_anchor, extract_section};
     use syn::{parse_quote, ItemFn};
 
     #[test]
@@ -1058,7 +1060,9 @@ mod spec_locked_anchor_extract_tests {
 
 #[cfg(test)]
 mod failure_kind_tests {
-    use super::{failed_verification, failure_kind, FailureKind, PartialReason, VerificationResult};
+    use super::{
+        failed_verification, failure_kind, FailureKind, PartialReason, VerificationResult,
+    };
 
     #[test]
     fn determinism_z3_unknown_is_solver_unknown_not_counterexample() {
@@ -1084,4 +1088,3 @@ mod failure_kind_tests {
         assert_eq!(failure_kind("Ensures", msg), FailureKind::Counterexample);
     }
 }
-

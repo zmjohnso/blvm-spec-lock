@@ -98,7 +98,10 @@ fn z3_sat_smoke(fs: &FormulaSpec, timeout_ms: u64) -> Z3FormulaPhase {
 }
 
 /// Sort-stable scan of merged **`Formula`** registry: static gate always; optional Z3 SAT smoke.
-pub fn analyze_formula_registry(parser: &SpecParser, cfg: FormulaAnalyzeConfig) -> FormulaRegistryAnalysis {
+pub fn analyze_formula_registry(
+    parser: &SpecParser,
+    cfg: FormulaAnalyzeConfig,
+) -> FormulaRegistryAnalysis {
     let mut formulas: Vec<&FormulaSpec> = parser.formulas().values().collect();
     formulas.sort_by(|a, b| a.id.cmp(&b.id));
 

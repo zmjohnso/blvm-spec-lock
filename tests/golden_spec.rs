@@ -13,11 +13,7 @@ fn format_parser_snapshot(parser: &SpecParser) -> String {
         let sec = parser
             .find_section(&id)
             .unwrap_or_else(|| panic!("missing section {id}"));
-        out.push_str(&format!(
-            "## section {} | {}\n",
-            sec.id,
-            sec.title.trim()
-        ));
+        out.push_str(&format!("## section {} | {}\n", sec.id, sec.title.trim()));
 
         for c in &sec.constants {
             out.push_str(&format!(
@@ -29,11 +25,7 @@ fn format_parser_snapshot(parser: &SpecParser) -> String {
         for sp in &sec.standalone_properties {
             out.push_str(&format!(
                 "  standalone {} | type={:?} | outer={:?} | inner={:?} | constraint={:?}\n",
-                sp.name,
-                sp.property_type,
-                sp.outer_func,
-                sp.inner_func,
-                sp.constraint
+                sp.name, sp.property_type, sp.outer_func, sp.inner_func, sp.constraint
             ));
             out.push_str(&format!("    formula_raw: {}\n", sp.formula_raw));
         }

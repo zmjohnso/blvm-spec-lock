@@ -170,15 +170,9 @@ pub fn format_verify_json_report(
                 result_obj["contract"] = json!(contract);
                 result_obj["reason"] = json!(reason);
                 let mut detail = serde_json::Map::new();
-                detail.insert(
-                    "failure_kind".into(),
-                    json!(kind.as_str()),
-                );
+                detail.insert("failure_kind".into(), json!(kind.as_str()));
                 if let Some(pr) = partial_reason {
-                    detail.insert(
-                        "partial_reason".into(),
-                        json!(pr.as_str()),
-                    );
+                    detail.insert("partial_reason".into(), json!(pr.as_str()));
                 }
                 result_obj["detail"] = json!(detail);
             }
@@ -235,9 +229,9 @@ pub fn format_verify_json_report(
     });
 
     if let Some((analysis, flags)) = formula_registry {
-        if let Ok(nested) = serde_json::from_str::<serde_json::Value>(&format_formula_verify_json_report(
-            analysis, flags,
-        )) {
+        if let Ok(nested) = serde_json::from_str::<serde_json::Value>(
+            &format_formula_verify_json_report(analysis, flags),
+        ) {
             output_val["formula_registry"] = nested;
         }
     }
@@ -261,8 +255,11 @@ pub fn format_formula_verify_json_report(
 ) -> String {
     use serde_json::json;
 
-    let json_results: Vec<serde_json::Value> =
-        analysis.rows.iter().map(formula_analysis_row_json).collect();
+    let json_results: Vec<serde_json::Value> = analysis
+        .rows
+        .iter()
+        .map(formula_analysis_row_json)
+        .collect();
 
     let static_pass = analysis
         .rows
@@ -363,7 +360,10 @@ fn formula_z3_phase_json(r: &FormulaAnalysisRow) -> serde_json::Value {
     }
 }
 
-pub fn format_formula_verify_human(analysis: &FormulaRegistryAnalysis, z3_requested: bool) -> String {
+pub fn format_formula_verify_human(
+    analysis: &FormulaRegistryAnalysis,
+    z3_requested: bool,
+) -> String {
     use std::fmt::Write;
     let mut s = String::new();
     let _ = writeln!(
@@ -480,11 +480,7 @@ mod tests {
         base(None, None, "function");
         base(Some("F_X".to_string()), None, "formula");
         base(None, Some("C_Y".to_string()), "constant");
-        base(
-            Some("F_Z".to_string()),
-            Some("C_Z".to_string()),
-            "formula",
-        );
+        base(Some("F_Z".to_string()), Some("C_Z".to_string()), "formula");
     }
 
     #[test]
@@ -591,13 +587,22 @@ mod tests {
     #[test]
     fn verify_json_partial_reason_variants_emit_stable_strings() {
         for (partial_reason, needle) in [
-            (PartialReason::Z3Unknown, "\"partial_reason\": \"z3_unknown\""),
-            (PartialReason::Z3Timeout, "\"partial_reason\": \"z3_timeout\""),
+            (
+                PartialReason::Z3Unknown,
+                "\"partial_reason\": \"z3_unknown\"",
+            ),
+            (
+                PartialReason::Z3Timeout,
+                "\"partial_reason\": \"z3_timeout\"",
+            ),
             (
                 PartialReason::UnsupportedTranslation,
                 "\"partial_reason\": \"unsupported_translation\"",
             ),
-            (PartialReason::MissingZ3Build, "\"partial_reason\": \"missing_z3_build\""),
+            (
+                PartialReason::MissingZ3Build,
+                "\"partial_reason\": \"missing_z3_build\"",
+            ),
             (
                 PartialReason::IncompleteCoverage,
                 "\"partial_reason\": \"incomplete_coverage\"",
@@ -630,10 +635,19 @@ mod tests {
     #[test]
     fn verify_json_failure_kind_variants_emit_stable_strings() {
         for (kind, needle) in [
-            (FailureKind::Counterexample, "\"failure_kind\": \"counterexample\""),
+            (
+                FailureKind::Counterexample,
+                "\"failure_kind\": \"counterexample\"",
+            ),
             (FailureKind::ParseError, "\"failure_kind\": \"parse_error\""),
-            (FailureKind::SolverUnknown, "\"failure_kind\": \"solver_unknown\""),
-            (FailureKind::SolverError, "\"failure_kind\": \"solver_error\""),
+            (
+                FailureKind::SolverUnknown,
+                "\"failure_kind\": \"solver_unknown\"",
+            ),
+            (
+                FailureKind::SolverError,
+                "\"failure_kind\": \"solver_error\"",
+            ),
             (FailureKind::Tooling, "\"failure_kind\": \"tooling\""),
             (FailureKind::Other, "\"failure_kind\": \"other\""),
         ] {
@@ -681,8 +695,11 @@ mod tests {
         assert!(st.contains("\"failure_kind\": \"solver_unknown\""), "{st}");
         assert!(st.contains("\"partial_reason\": \"z3_timeout\""), "{st}");
 
-        let other_row =
-            failed_verification("Ensures", "Z3: Z3 verification unknown: nondeterministic cause.", 1);
+        let other_row = failed_verification(
+            "Ensures",
+            "Z3: Z3 verification unknown: nondeterministic cause.",
+            1,
+        );
         let s2 = format_verify_json_report(&[(f, other_row)], None);
         assert!(s2.contains("\"failure_kind\": \"solver_unknown\""), "{s2}");
         assert!(s2.contains("\"partial_reason\": \"z3_unknown\""), "{s2}");

@@ -46,11 +46,20 @@ pub fn parse_verify_json_witness_rollups(
 
     for row in results {
         let st = row.get("status").and_then(|s| s.as_str());
-        if row.get("formula_anchor").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).is_some() {
+        if row
+            .get("formula_anchor")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
             formulas_any = true;
             bump(&mut formulas, st);
         }
-        if row.get("constant_anchor").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).is_some()
+        if row
+            .get("constant_anchor")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .is_some()
         {
             constants_any = true;
             bump(&mut constants, st);
@@ -143,8 +152,14 @@ pub fn generate_coverage(
         super::spec_enrich::enrich_functions_with_spec(&mut functions, paths)?;
     }
 
-    let formulas_bound_to_rust = functions.iter().filter(|f| f.formula_anchor.is_some()).count();
-    let constants_bound_to_rust = functions.iter().filter(|f| f.constant_anchor.is_some()).count();
+    let formulas_bound_to_rust = functions
+        .iter()
+        .filter(|f| f.formula_anchor.is_some())
+        .count();
+    let constants_bound_to_rust = functions
+        .iter()
+        .filter(|f| f.constant_anchor.is_some())
+        .count();
 
     let (
         formulas_defined,
@@ -153,12 +168,15 @@ pub fn generate_coverage(
         formula_anchor_spec_missing_id,
         formula_anchor_unparseable_body,
         constants_defined,
-    ) =
-        formula_and_constant_registry_metrics(spec_paths, &functions);
+    ) = formula_and_constant_registry_metrics(spec_paths, &functions);
 
     let (formulas_vf, constants_vf) = if let Some(p) = rollup_from_verify_json {
-        let txt = fs::read_to_string(p)
-            .map_err(|e| format!("coverage rollup cannot read verify JSON `{}`: {e}", p.display()))?;
+        let txt = fs::read_to_string(p).map_err(|e| {
+            format!(
+                "coverage rollup cannot read verify JSON `{}`: {e}",
+                p.display()
+            )
+        })?;
         parse_verify_json_witness_rollups(&txt)?
     } else {
         (None, None)
@@ -284,8 +302,7 @@ pub fn format_coverage_human(stats: &CoverageStats) -> String {
     ));
     output.push_str(&format!(
         "**`F_*`** bodies parseable (enrich/verify gate), spec-wide: {} / {}\n",
-        stats.formulas_parseable_body,
-        stats.formulas_defined
+        stats.formulas_parseable_body, stats.formulas_defined
     ));
     output.push_str(&format!(
         "Rust **`F_*`** anchors (`formula_anchor`): {}\n",
@@ -534,8 +551,7 @@ pub fn format_coverage_markdown(stats: &CoverageStats) -> String {
     } else {
         output.push_str(&format!(
             "- **Formulas with parseable body** (`enrich`/verify gate): {} / {}\n",
-            stats.formulas_parseable_body,
-            stats.formulas_defined
+            stats.formulas_parseable_body, stats.formulas_defined
         ));
     }
     if stats.formulas_defined == 0 {
@@ -765,14 +781,10 @@ pub fn format_spec_coverage_human(report: &SpecCoverageReport) -> String {
         report.impl_functions_without_contracts
     ));
     output.push_str("Named formulas (F_*), merged spec + Rust anchors:\n");
-    output.push_str(&format!(
-        "  Registry size: {}\n",
-        report.formulas_defined
-    ));
+    output.push_str(&format!("  Registry size: {}\n", report.formulas_defined));
     output.push_str(&format!(
         "  Bodies parseable (verify/enrich gate): {} / {}\n",
-        report.formulas_parseable_body,
-        report.formulas_defined
+        report.formulas_parseable_body, report.formulas_defined
     ));
     output.push_str(&format!(
         "  Rust formula_anchor count: {}\n",
@@ -891,8 +903,7 @@ pub fn format_spec_coverage_markdown(report: &SpecCoverageReport) -> String {
     } else {
         output.push_str(&format!(
             "| **`F_*` bodies parseable** | {} / {} |\n",
-            report.formulas_parseable_body,
-            report.formulas_defined
+            report.formulas_parseable_body, report.formulas_defined
         ));
     }
     output.push_str(&format!(

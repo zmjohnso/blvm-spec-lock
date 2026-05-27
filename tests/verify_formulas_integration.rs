@@ -205,7 +205,11 @@ fn verify_exits_nonzero_when_merged_formula_registry_static_gate_fails() {
     let md = bad_static_fixture_path();
     let crate_dir = no_section_fixture_crate_dir();
     assert!(md.exists(), "fixture missing: {}", md.display());
-    assert!(crate_dir.exists(), "fixture crate missing: {}", crate_dir.display());
+    assert!(
+        crate_dir.exists(),
+        "fixture crate missing: {}",
+        crate_dir.display()
+    );
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let output = Command::new("cargo")

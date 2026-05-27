@@ -358,8 +358,7 @@ impl SpecParser {
                         if prev.rust_expr != c.rust_expr || prev.section != c.section {
                             return Err(format!(
                                 "Merged spec: duplicate `{sid}` stable id (sections §{} vs §{})",
-                                prev.section,
-                                c.section
+                                prev.section, c.section
                             ));
                         }
                     }
@@ -410,9 +409,7 @@ impl SpecParser {
             let header_end = header.end();
             let tail = &content[header_end..];
             let (latex_body, consumed) = Self::first_display_math_block(tail).map_err(|e| {
-                format!(
-                    "Section `{section_id}` formula `{id}` — display math extraction: {e}"
-                )
+                format!("Section `{section_id}` formula `{id}` — display math extraction: {e}")
             })?;
             let raw_markdown = content[header_start..header_end + consumed].to_string();
             let after_formula_abs = header_end + consumed;
@@ -439,9 +436,9 @@ impl SpecParser {
             .find("$$")
             .ok_or_else(|| "missing opening `$$` after **Formula** header".to_string())?;
         let after_open = &tail[open + 2..];
-        let inner_end_rel = after_open.find("$$").ok_or_else(|| {
-            "missing closing `$$` for display math formula".to_string()
-        })?;
+        let inner_end_rel = after_open
+            .find("$$")
+            .ok_or_else(|| "missing closing `$$` for display math formula".to_string())?;
         let latex_body = after_open[..inner_end_rel].trim().to_string();
         if latex_body.is_empty() {
             return Err("display math `$$ $$` formula is empty".to_string());
@@ -1663,13 +1660,17 @@ mod formula_extraction_tests {
     }
 
     fn parse(md: &str) -> Result<SpecParser, String> {
-        let _guard = FORMULA_TESTS_MUTEX.lock().expect("formula tests mutex poisoned");
+        let _guard = FORMULA_TESTS_MUTEX
+            .lock()
+            .expect("formula tests mutex poisoned");
         parse_unsync(md)
     }
 
     #[test]
     fn spec_lock_formulas_env_zero_skips_formula_registry() {
-        let _guard = FORMULA_TESTS_MUTEX.lock().expect("formula tests mutex poisoned");
+        let _guard = FORMULA_TESTS_MUTEX
+            .lock()
+            .expect("formula tests mutex poisoned");
         let _scoped = ScopedSpecLockFormulas::set(Some("0"));
         let md = r"## 42.99 Toggle
 
@@ -1823,7 +1824,9 @@ $$2$$
 
     #[test]
     fn merge_reports_duplicate_formula_id() {
-        let _guard = FORMULA_TESTS_MUTEX.lock().expect("formula tests mutex poisoned");
+        let _guard = FORMULA_TESTS_MUTEX
+            .lock()
+            .expect("formula tests mutex poisoned");
         let a = r"## 1.1 Only
 
 **Formula** (**F_Merge**):
@@ -1841,10 +1844,7 @@ $$b$$
         let mut p2 = SpecParser::new(b.to_string());
         p2.parse().unwrap();
         let err = p1.merge(p2).unwrap_err();
-        assert!(
-            err.contains("Duplicate formula id"),
-            "unexpected: {err}"
-        );
+        assert!(err.contains("Duplicate formula id"), "unexpected: {err}");
     }
 
     #[test]
@@ -1868,7 +1868,9 @@ $$1$$
 ";
         let p = parse(md).expect("parse");
         assert!(
-            !p.get_section_functions("42.47").iter().any(|f| f.name == "Formula"),
+            !p.get_section_functions("42.47")
+                .iter()
+                .any(|f| f.name == "Formula"),
             "Formula must not appear as bogus FunctionSpec"
         );
         assert!(p.formulas().contains_key("F_Only"));
@@ -1883,9 +1885,6 @@ mod depends_on_regex_tests {
     fn parse_depends_on_ids_accepts_bold_with_inner_backticks() {
         let s = "\n\n**Depends on:**\n- **`F_Other`** references **`C_SAT`**\n";
         let ids = SpecParser::parse_depends_on_ids(s);
-        assert_eq!(
-            ids,
-            vec!["C_SAT".to_string(), "F_Other".to_string()]
-        );
+        assert_eq!(ids, vec!["C_SAT".to_string(), "F_Other".to_string()]);
     }
 }

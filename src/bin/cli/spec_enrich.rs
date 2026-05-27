@@ -57,7 +57,9 @@ pub fn enrich_functions_with_spec(
 
         // Phase **`C_*`** — consensus **`ExtractedConstant`** (**`constants_stable_id_map`**).
         if let Some(cid) = &func.constant_anchor {
-            let cmap = parser.constants_stable_id_map().map_err(|e| format!("Orange Paper (--spec-path) constant index: {e}"))?;
+            let cmap = parser
+                .constants_stable_id_map()
+                .map_err(|e| format!("Orange Paper (--spec-path) constant index: {e}"))?;
             match cmap.get(cid) {
                 None => {
                     return Err(format!(
@@ -201,7 +203,11 @@ pub fn enrich_functions_with_spec(
         // Fallback: spec has no parseable contracts for this section (e.g. complex math only).
         // Add default ensures(true) so verification doesn't fail with "no contracts".
         // Keeps Orange Paper focused on math; tooling handles the rest.
-        if func.contracts.is_empty() && func.section.is_some() && func.formula_anchor.is_none() && func.constant_anchor.is_none() {
+        if func.contracts.is_empty()
+            && func.section.is_some()
+            && func.formula_anchor.is_none()
+            && func.constant_anchor.is_none()
+        {
             if let Ok(expr) = syn::parse_str::<syn::Expr>("true") {
                 func.contracts.push(Contract {
                     contract_type: ContractType::Ensures,
@@ -261,7 +267,10 @@ $$true$$
         assert_eq!(n, 1);
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0].contracts.len(), 1);
-        assert_eq!(functions[0].contracts[0].contract_type, ContractType::Ensures);
+        assert_eq!(
+            functions[0].contracts[0].contract_type,
+            ContractType::Ensures
+        );
         assert!(functions[0].contracts[0].expr.is_some());
     }
 
@@ -301,7 +310,10 @@ $SMK = 7$
         assert_eq!(n, 1);
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0].contracts.len(), 1);
-        assert_eq!(functions[0].contracts[0].contract_type, ContractType::Ensures);
+        assert_eq!(
+            functions[0].contracts[0].contract_type,
+            ContractType::Ensures
+        );
         assert!(functions[0].contracts[0].expr.is_some());
     }
 
