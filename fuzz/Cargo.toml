@@ -11,7 +11,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-blvm-spec-lock-core = { path = "../crates/blvm-spec-lock-core" }
+syn = { version = "2.0", features = ["full", "parsing", "extra-traits"] }
+regex = "1.10"
 
 [[bin]]
 name = "lexer_parse"

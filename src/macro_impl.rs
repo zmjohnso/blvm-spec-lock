@@ -4,7 +4,7 @@
 //! Contracts are provided via manual #[requires] and #[ensures] attributes,
 //! which will be verified by the BLVM Spec Lock verification tool.
 
-use blvm_spec_lock_core::parser::{
+use crate::parser::{
     section_id_subsumes_formula_section, Contract, ContractType, FunctionSpec, SpecParser,
     SpecSection,
 };
@@ -279,9 +279,9 @@ fn generate_ensures(spec: &FunctionSpec, func: &syn::ItemFn) -> TokenStream {
         // Skip Orange Paper contracts for tuple return types - they need special handling
         for contract in &spec.contracts {
             match contract.contract_type {
-                blvm_spec_lock_core::parser::ContractType::Ensures
-                | blvm_spec_lock_core::parser::ContractType::Property
-                | blvm_spec_lock_core::parser::ContractType::EdgeCase => {
+                crate::parser::ContractType::Ensures
+                | crate::parser::ContractType::Property
+                | crate::parser::ContractType::EdgeCase => {
                     // Translate mathematical notation to Rust contract
                     let rust_expr =
                         translate_math_to_rust_contract(&contract.condition, &spec.name, func);
@@ -301,7 +301,7 @@ fn generate_ensures(spec: &FunctionSpec, func: &syn::ItemFn) -> TokenStream {
                         #[blvm_spec_lock::ensures(#rust_expr)]#comment_tokens
                     });
                 }
-                blvm_spec_lock_core::parser::ContractType::Requires => {
+                crate::parser::ContractType::Requires => {
                     // Requires are handled in generate_requires
                 }
             }
@@ -320,8 +320,7 @@ fn generate_ensures(spec: &FunctionSpec, func: &syn::ItemFn) -> TokenStream {
         for property in &spec.properties {
             if matches!(
                 property.property_type,
-                blvm_spec_lock_core::parser::PropertyType::Ensures
-                    | blvm_spec_lock_core::parser::PropertyType::Invariant
+                crate::parser::PropertyType::Ensures | crate::parser::PropertyType::Invariant
             ) {
                 // Translate mathematical notation to Rust contract
                 let rust_expr =

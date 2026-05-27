@@ -25,6 +25,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # Builds **`blvm-spec-lock-core`** (path dep; **`z3`** linked by crate defaults) plus **`lexer_parse`** fuzz targets.
+      # Builds parser/translator modules plus `lexer_parse` fuzz targets.
       - name: cargo build fuzz workspace
         run: cargo build --manifest-path fuzz/Cargo.toml --release -j 2 --locked

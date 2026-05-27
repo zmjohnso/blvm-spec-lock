@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish blvm-spec-lock packages to crates.io (core first — required by the proc-macro crate).
+# Publish blvm-spec-lock to crates.io.
 #
 # Prerequisites:
 #   cargo login   # once per machine; or set CARGO_REGISTRY_TOKEN for CI
@@ -23,10 +23,7 @@ if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
   fi
 fi
 
-echo "📦 Publishing blvm-spec-lock-core…"
-cargo publish -p blvm-spec-lock-core "${EXTRA[@]}"
-
 echo "📦 Publishing blvm-spec-lock (proc-macro + cargo-spec-lock CLI)…"
 cargo publish -p blvm-spec-lock "${EXTRA[@]}"
 
-echo "✅ Done. Confirm on https://crates.io/crates/blvm-spec-lock and https://crates.io/crates/blvm-spec-lock-core"
+echo "✅ Done. Confirm on https://crates.io/crates/blvm-spec-lock"

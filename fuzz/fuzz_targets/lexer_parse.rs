@@ -3,7 +3,10 @@
 //! Fuzz the spec-condition lexer (UTF-8 only). Requires `cargo-fuzz` (`cargo install cargo-fuzz`).
 //! From this directory: `cargo +nightly fuzz run lexer_parse`
 
-use blvm_spec_lock_core::parser::lexer::Lexer;
+#[path = "../../src/parser/mod.rs"]
+mod parser;
+
+use parser::lexer::Lexer;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

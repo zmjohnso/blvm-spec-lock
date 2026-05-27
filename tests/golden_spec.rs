@@ -2,7 +2,10 @@
 //!
 //! Run with `INSTA_UPDATE=always cargo test golden_` after intentional parser changes.
 
-use blvm_spec_lock_core::parser::orange_paper::SpecParser;
+#[path = "../src/parser/mod.rs"]
+mod parser;
+
+use parser::orange_paper::SpecParser;
 use std::path::PathBuf;
 
 fn format_parser_snapshot(parser: &SpecParser) -> String {

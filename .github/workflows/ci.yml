@@ -157,23 +157,16 @@ jobs:
         if: steps.gate.outputs.do_release == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          bump_version() {
-            local f="$1"
-            awk -v ver="$VERSION" '
-              /^\[package\]/ { in_package = 1; print; next }
-              /^\[/ { in_package = 0 }
-              in_package && /^version = / {
-                print "version = \"" ver "\""
-                next
-              }
-              { print }
-            ' "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
-          }
-          bump_version Cargo.toml
-          bump_version crates/blvm-spec-lock-core/Cargo.toml
-          # Keep path dependency semver aligned with crates.io sibling.
-          sed -i "s/blvm-spec-lock-core = { version = \"[^\"]*\"/blvm-spec-lock-core = { version = \"${VERSION}\"/" Cargo.toml
-          echo "Updated workspace versions to ${VERSION}"
+          awk -v ver="$VERSION" '
+            /^\[package\]/ { in_package = 1; print; next }
+            /^\[/ { in_package = 0 }
+            in_package && /^version = / {
+              print "version = \"" ver "\""
+              next
+            }
+            { print }
+          ' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
+          echo "Updated Cargo.toml to version ${VERSION}"
 
       - name: Pre-release smoke test
         if: steps.gate.outputs.do_release == 'true'
@@ -186,7 +179,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml crates/blvm-spec-lock-core/Cargo.toml
+          git add Cargo.toml
           if git diff --staged --quiet; then
             echo "No Cargo.toml changes to commit"
           else
@@ -203,29 +196,20 @@ jobs:
         if: steps.gate.outputs.do_release == 'true'
         run: cargo login "${CARGO_REGISTRY_TOKEN}"
 
-      - name: Verify package versions
+      - name: Verify package version
         if: steps.gate.outputs.do_release == 'true'
         run: |
           EXPECTED="${{ steps.version.outputs.version }}"
-          ROOT=$(grep -A 10 '^\[package\]' Cargo.toml | grep '^version = ' | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
-          CORE=$(grep '^version = ' crates/blvm-spec-lock-core/Cargo.toml | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
-          [ "$ROOT" = "$EXPECTED" ] || { echo "Root Cargo.toml mismatch: expected ${EXPECTED}, got ${ROOT}"; exit 1; }
-          [ "$CORE" = "$EXPECTED" ] || { echo "Core Cargo.toml mismatch: expected ${EXPECTED}, got ${CORE}"; exit 1; }
+          ACTUAL=$(grep -A 10 '^\[package\]' Cargo.toml | grep '^version = ' | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
+          [ "$ACTUAL" = "$EXPECTED" ] || { echo "Version mismatch: expected ${EXPECTED}, got ${ACTUAL}"; exit 1; }
 
       - name: Package metadata
         if: steps.gate.outputs.do_release == 'true'
-        run: |
-          cargo package -p blvm-spec-lock-core --list --allow-dirty
-          cargo package -p blvm-spec-lock --list --allow-dirty
+        run: cargo package --list
 
       - name: Dry-run publish
         if: steps.gate.outputs.do_release == 'true'
-        run: |
-          # Workspace split: blvm-spec-lock depends on blvm-spec-lock-core from crates.io.
-          # Main-crate `cargo publish --dry-run` fails until core is on the index, so dry-run
-          # only core here; main manifest is checked in Package metadata (--list) and after
-          # core is published for real in the Publish step below.
-          cargo publish -p blvm-spec-lock-core --dry-run --allow-dirty
+        run: cargo publish --dry-run
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -262,61 +246,35 @@ jobs:
         run: |
           set +e
           VERSION="${{ steps.version.outputs.version }}"
-          ACTUAL_ROOT=$(grep -A 12 '^\[package\]' Cargo.toml | grep '^version = ' | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
-          ACTUAL_CORE=$(grep '^version = ' crates/blvm-spec-lock-core/Cargo.toml | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
-          if [ "$ACTUAL_ROOT" != "$VERSION" ] || [ "$ACTUAL_CORE" != "$VERSION" ]; then
+          CRATE_NAME=$(grep -E '^name = ' Cargo.toml | head -1 | sed -E 's/^name = "([^"]+)".*/\1/')
+          ACTUAL=$(grep -A 10 '^\[package\]' Cargo.toml | grep '^version = ' | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
+          if [ "$ACTUAL" != "$VERSION" ]; then
             echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "::error::Version mismatch after bump"
             exit 1
           fi
           if [ "${{ steps.check-version.outputs.exists }}" = "true" ]; then
-            echo "Version ${VERSION} already on crates.io for blvm-spec-lock, skipping publish"
+            echo "Version ${VERSION} already on crates.io, skipping publish"
             echo "published=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          PUBLISHED_CORE=false
-          PUBLISHED_LOCK=false
-
-          OUT_CORE=$(cargo publish -p blvm-spec-lock-core --token "${CARGO_REGISTRY_TOKEN}" 2>&1)
-          CODE_CORE=$?
-          echo "$OUT_CORE"
-          if [ "$CODE_CORE" -eq 0 ]; then
-            PUBLISHED_CORE=true
-          elif echo "$OUT_CORE" | grep -qi "already exists"; then
-            echo "Note: blvm-spec-lock-core ${VERSION} already on crates.io (continuing)"
-            PUBLISHED_CORE=true
-          else
-            echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "::error::cargo publish blvm-spec-lock-core failed"
-            exit 1
-          fi
-
-          sleep 25
-
-          OUT_LOCK=$(cargo publish -p blvm-spec-lock --token "${CARGO_REGISTRY_TOKEN}" 2>&1)
-          CODE_LOCK=$?
-          echo "$OUT_LOCK"
-          if [ "$CODE_LOCK" -eq 0 ]; then
-            PUBLISHED_LOCK=true
-          elif echo "$OUT_LOCK" | grep -qi "already exists"; then
-            echo "Note: blvm-spec-lock ${VERSION} already exists"
-            PUBLISHED_LOCK=true
-          else
-            echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "::error::cargo publish blvm-spec-lock failed"
-            exit 1
-          fi
-
-          if [ "$PUBLISHED_CORE" = true ] && [ "$PUBLISHED_LOCK" = true ]; then
+          OUT=$(cargo publish --token "${CARGO_REGISTRY_TOKEN}" 2>&1)
+          CODE=$?
+          echo "$OUT"
+          if [ $CODE -eq 0 ]; then
             echo "published=true" >> "$GITHUB_OUTPUT"
             sleep 30
+          elif echo "$OUT" | grep -qi "already exists"; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "::error::cargo publish failed (see log above)"
+            exit 1
           fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Final verify blvm-spec-lock on crates.io
+      - name: Final verify on crates.io
         if: steps.gate.outputs.do_release == 'true'
         id: final-verify
         run: |

@@ -30,8 +30,12 @@
 //! 2. Parses the specified section
 //! 3. Links function to spec (contracts come from manual annotations or Orange Paper)
 
-// Parser/translator live in blvm_spec_lock_core; lib is proc-macro + placeholders.
 #![allow(dead_code)]
+
+#[path = "parser/mod.rs"]
+mod parser;
+#[path = "translator/mod.rs"]
+mod translator;
 
 mod macro_impl;
 mod report;

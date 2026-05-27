@@ -30,7 +30,7 @@ To use as a cargo subcommand, create a symlink:
 ln -s target/release/cargo-spec-lock ~/.cargo/bin/cargo-spec-lock
 ```
 
-Repository layout is a Cargo **workspace**: shared parser/translator live in **`crates/blvm-spec-lock-core`**, and **`blvm-spec-lock`** publishes the proc-macro + **`cargo-spec-lock`** binary against that crate. Releases to crates.io publish **`blvm-spec-lock-core`**, then **`blvm-spec-lock`**, in order — see **`scripts/publish-crates-io.sh`** (**`cargo login`** required once).
+Parser and translator live under **`src/parser`** and **`src/translator`**; the proc-macro crate and **`cargo-spec-lock`** binary share those modules. Publish with **`./scripts/publish-crates-io.sh`** (**`cargo login`** required once).
 
 ## Usage
 

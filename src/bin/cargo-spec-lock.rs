@@ -8,8 +8,11 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-// Re-export so `crate::parser` / `crate::translator` keep working inside `cli::…`.
-pub use blvm_spec_lock_core::{parser, translator};
+// Include library modules (using path to access them from binary)
+#[path = "../parser/mod.rs"]
+mod parser;
+#[path = "../translator/mod.rs"]
+mod translator;
 
 // Include CLI modules (they're in src/bin/cli/)
 mod cli;
