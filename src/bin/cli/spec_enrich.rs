@@ -85,6 +85,7 @@ pub fn enrich_functions_with_spec(
                             contract_type: ContractType::Ensures,
                             condition: stored,
                             expr: Some(expr),
+                            is_spec_derived: true,
                         });
                         enriched_count += 1;
                     }
@@ -120,6 +121,7 @@ pub fn enrich_functions_with_spec(
                                 contract_type: ContractType::Ensures,
                                 condition: condition.clone(),
                                 expr,
+                                is_spec_derived: true,
                             });
                             enriched_count += 1;
                         }
@@ -179,6 +181,7 @@ pub fn enrich_functions_with_spec(
                     contract_type,
                     condition: condition.clone(),
                     expr,
+                    is_spec_derived: true,
                 };
 
                 if !func.contracts.iter().any(|c| c.condition == condition) {
@@ -194,6 +197,7 @@ pub fn enrich_functions_with_spec(
                         contract_type: ContractType::Ensures,
                         condition: "true".to_string(),
                         expr: Some(expr),
+                        is_spec_derived: true,
                     });
                     enriched_count += 1;
                 }
@@ -213,6 +217,7 @@ pub fn enrich_functions_with_spec(
                     contract_type: ContractType::Ensures,
                     condition: "true".to_string(),
                     expr: Some(expr),
+                    is_spec_derived: true,
                 });
                 enriched_count += 1;
             }

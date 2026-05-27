@@ -25,6 +25,10 @@ pub struct Contract {
     pub contract_type: ContractType,
     pub condition: String,
     pub expr: Option<syn::Expr>, // Parsed expression for static checker
+    /// True when this contract was auto-derived from the Orange Paper spec (not manually written).
+    /// Spec-derived contract violations produce `partial` status rather than `failed`, since the
+    /// LaTeX→Z3 translation is best-effort and may not capture all implementation context.
+    pub is_spec_derived: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +69,8 @@ fn extract_contracts(func: &ItemFn) -> Vec<Contract> {
                         ContractType::Ensures
                     },
                     condition: condition_str,
-                    expr: Some(expr), // Store parsed expression for static checker
+                    expr: Some(expr),
+                    is_spec_derived: false,
                 });
             } else {
                 // If parsing fails, store as string only
@@ -78,6 +83,7 @@ fn extract_contracts(func: &ItemFn) -> Vec<Contract> {
                     },
                     condition: condition_str,
                     expr: None,
+                    is_spec_derived: false,
                 });
             }
         }
@@ -234,6 +240,7 @@ fn extract_contracts_from_attrs(attrs: &[Attribute]) -> Vec<Contract> {
                     },
                     condition: quote::quote!(#expr).to_string(),
                     expr: Some(expr),
+                    is_spec_derived: false,
                 });
             } else {
                 contracts.push(Contract {
@@ -244,6 +251,7 @@ fn extract_contracts_from_attrs(attrs: &[Attribute]) -> Vec<Contract> {
                     },
                     condition: quote::quote!(#attr).to_string(),
                     expr: None,
+                    is_spec_derived: false,
                 });
             }
         }
@@ -433,7 +441,8 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
     // 3. Return appropriate result
 
     let mut verified_count = 0;
-    let mut failed_contracts = Vec::new();
+    // (contract_type_str, reason, is_spec_derived)
+    let mut failed_contracts: Vec<(String, String, bool)> = Vec::new();
     let mut requires_z3_count = 0;
     let translation_error = RefCell::new(None::<String>);
 
@@ -456,6 +465,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
             failed_contracts.push((
                 format!("{:?}", contract.contract_type),
                 "Empty contract condition".to_string(),
+                contract.is_spec_derived,
             ));
             continue;
         }
@@ -467,11 +477,14 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                     verified_count += 1;
                 }
                 StaticCheck::Failed(reason) => {
-                    failed_contracts.push((format!("{:?}", contract.contract_type), reason));
+                    failed_contracts.push((
+                        format!("{:?}", contract.contract_type),
+                        reason,
+                        contract.is_spec_derived,
+                    ));
                 }
                 StaticCheck::RequiresZ3 => {
                     requires_z3_count += 1;
-                    // Try Z3 if available
                     #[cfg(feature = "z3")]
                     {
                         if let Err(e) = verify_with_z3(
@@ -483,6 +496,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                             failed_contracts.push((
                                 format!("{:?}", contract.contract_type),
                                 format!("Z3 verification failed: {e}"),
+                                contract.is_spec_derived,
                             ));
                         } else {
                             verified_count += 1;
@@ -494,36 +508,45 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                             format!("{:?}", contract.contract_type),
                             "Z3 required but not built. Build blvm-spec-lock with --features z3."
                                 .to_string(),
+                            contract.is_spec_derived,
                         ));
                     }
                 }
             }
         } else {
-            // No parsed expression - can't do static check
-            // Mark as requiring Z3 or manual verification
             requires_z3_count += 1;
-            // Don't count as verified - we can't verify without a parsed expression
             failed_contracts.push((
                 format!("{:?}", contract.contract_type),
                 "Cannot verify: contract condition could not be parsed as expression".to_string(),
+                contract.is_spec_derived,
             ));
         }
     }
 
-    // Early return if requires contracts failed
+    // Early return if requires contracts failed.
+    // If all failures are from spec-derived contracts, demote to Partial (best-effort).
     if !failed_contracts.is_empty() {
-        let (contract_type, reason) = &failed_contracts[0];
+        let all_spec_derived = failed_contracts.iter().all(|(_, _, sd)| *sd);
+        if all_spec_derived {
+            return VerificationResult::Partial {
+                verified: verified_count,
+                total: function.contracts.len(),
+                reason: Some(failed_contracts[0].1.clone()),
+                partial_reason: Some(PartialReason::UnsupportedTranslation),
+            };
+        }
+        let (contract_type, reason, _) = &failed_contracts[0];
         return failed_verification(contract_type, reason, failed_contracts.len());
     }
 
     // Now verify ensures contracts with the requires as context
-    // This is the KEY to Orange Paper verification:
     // We prove: requires && implementation => ensures
     for contract in &ensures_contracts {
         if contract.condition.trim().is_empty() {
             failed_contracts.push((
                 format!("{:?}", contract.contract_type),
                 "Empty contract condition".to_string(),
+                contract.is_spec_derived,
             ));
             continue;
         }
@@ -546,6 +569,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                                 failed_contracts.push((
                                     format!("{:?}", contract.contract_type),
                                     format!("Determinism: {e}"),
+                                    contract.is_spec_derived,
                                 ));
                             }
                         }
@@ -555,6 +579,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                     failed_contracts.push((
                         format!("{:?}", contract.contract_type),
                         "Determinism requires function signature".to_string(),
+                        contract.is_spec_derived,
                     ));
                 }
             }
@@ -563,6 +588,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                 failed_contracts.push((
                     format!("{:?}", contract.contract_type),
                     "Z3 required for determinism verification. Build blvm-spec-lock with --features z3.".to_string(),
+                    contract.is_spec_derived,
                 ));
             }
             continue;
@@ -574,14 +600,16 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                     verified_count += 1;
                 }
                 StaticCheck::Failed(reason) => {
-                    failed_contracts.push((format!("{:?}", contract.contract_type), reason));
+                    failed_contracts.push((
+                        format!("{:?}", contract.contract_type),
+                        reason,
+                        contract.is_spec_derived,
+                    ));
                 }
                 StaticCheck::RequiresZ3 => {
                     requires_z3_count += 1;
                     #[cfg(feature = "z3")]
                     {
-                        // For ensures, pass the requires contracts as context
-                        // This allows verifier to prove: requires && impl => ensures
                         if let Err(e) = verify_with_z3(
                             contract,
                             function.function_sig.as_ref(),
@@ -591,6 +619,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                             failed_contracts.push((
                                 format!("{:?}", contract.contract_type),
                                 format!("Z3: {e}"),
+                                contract.is_spec_derived,
                             ));
                         } else {
                             verified_count += 1;
@@ -602,6 +631,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
                             format!("{:?}", contract.contract_type),
                             "Z3 required but not built. Build blvm-spec-lock with --features z3."
                                 .to_string(),
+                            contract.is_spec_derived,
                         ));
                     }
                 }
@@ -611,13 +641,25 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
             failed_contracts.push((
                 format!("{:?}", contract.contract_type),
                 "Cannot verify: contract condition could not be parsed".to_string(),
+                contract.is_spec_derived,
             ));
         }
     }
 
-    // Report results
+    // Report results.
+    // If all failures came from spec-derived (auto-enriched) contracts, demote to Partial.
+    // Only manually-written #[requires]/#[ensures] contracts produce Failed.
     if !failed_contracts.is_empty() {
-        let (contract_type, reason) = &failed_contracts[0];
+        let all_spec_derived = failed_contracts.iter().all(|(_, _, sd)| *sd);
+        if all_spec_derived {
+            return VerificationResult::Partial {
+                verified: verified_count,
+                total: function.contracts.len(),
+                reason: Some(failed_contracts[0].1.clone()),
+                partial_reason: Some(PartialReason::UnsupportedTranslation),
+            };
+        }
+        let (contract_type, reason, _) = &failed_contracts[0];
         return failed_verification(contract_type, reason, failed_contracts.len());
     }
 
