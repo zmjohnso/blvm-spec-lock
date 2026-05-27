@@ -20,8 +20,12 @@ pub struct DriftResult {
     pub auto_inferred: Vec<FunctionToVerify>,
     /// Spec contracts that are unparseable (spec has them but we can't verify)
     pub unparseable_spec_contracts: Vec<UnparseableContract>,
+    /// **`F_*`** formula bodies (**`latex_body`**) failing the verifier parse gate
+    pub unparseable_formulas: Vec<UnparseableFormula>,
     /// With `--scoped-unparseables`: unparseables in sections not referenced by `#[spec_locked]` (informational)
     pub unparseable_omitted_outside_scope: usize,
+    /// With `--scoped-formulas`: formula drift rows omitted outside locked § prefixes (informational)
+    pub unparseable_formulas_omitted_outside_scope: usize,
 }
 
 /// A spec contract that couldn't be parsed for verification
@@ -30,6 +34,15 @@ pub struct UnparseableContract {
     pub section: String,
     pub function: String,
     pub condition: String,
+}
+
+/// A **`Formula` (`F_*`)** **`$$`** body that does not satisfy the same **`extract_parseable_condition` +
+/// `syn`** gate used by **`spec_enrich`** / **`verify`**.
+#[derive(Debug, Clone)]
+pub struct UnparseableFormula {
+    pub id: String,
+    pub section: String,
+    pub body_preview: String,
 }
 
 /// A contract mismatch
@@ -43,12 +56,15 @@ pub struct MismatchedContract {
 
 /// Detect spec drift
 ///
-/// When `scoped_unparseables` is true, only unparseable spec properties in sections that match a
-/// `#[spec_locked("…")]` prefix in the crate contribute to drift / failure.
+/// When **`scoped_unparseables`** is true, only unparseable spec properties in sections that match a
+/// **`#[spec_locked("…")]`** prefix in the crate contribute to drift / failure for **Function** contracts.
+///
+/// **`scoped_formulas`**: same prefix rule applies to **`F_*`** **Formula** **`latex_body`** rows.
 pub fn detect_drift(
     workspace_root: &PathBuf,
     orange_paper_paths: Option<&[PathBuf]>,
     scoped_unparseables: bool,
+    scoped_formulas: bool,
 ) -> Result<DriftResult, String> {
     use crate::parser::condition;
     use crate::parser::orange_paper::SpecParser;
@@ -81,6 +97,11 @@ pub fn detect_drift(
         }
     }
 
+    let locked_sections: std::collections::HashSet<String> =
+        functions.iter().filter_map(|f| f.section.clone()).collect();
+
+    let mut unparseable_formulas = Vec::new();
+
     if spec_paths.iter().all(|p| p.exists()) && !spec_paths.is_empty() {
         let parser =
             SpecParser::from_paths(&spec_paths).map_err(|e| format!("Failed to load spec: {e}"))?;
@@ -103,10 +124,18 @@ pub fn detect_drift(
                 }
             }
         }
-    }
 
-    let locked_sections: std::collections::HashSet<String> =
-        functions.iter().filter_map(|f| f.section.clone()).collect();
+        for fspec in parser.formulas().values() {
+            if !formula_latex_parseable_for_verify(&fspec.latex_body) {
+                let preview = trim_preview(&fspec.latex_body, 120);
+                unparseable_formulas.push(UnparseableFormula {
+                    id: fspec.id.clone(),
+                    section: fspec.section.clone(),
+                    body_preview: preview,
+                });
+            }
+        }
+    }
 
     let (unparseable_spec_contracts, unparseable_omitted_outside_scope) = if scoped_unparseables {
         let full = unparseable_spec_contracts;
@@ -124,14 +153,57 @@ pub fn detect_drift(
         (unparseable_spec_contracts, 0)
     };
 
+    let (unparseable_formulas, unparseable_formulas_omitted_outside_scope) = if scoped_formulas {
+        let full = unparseable_formulas;
+        let mut kept = Vec::new();
+        let mut omitted = 0usize;
+        for u in full {
+            if unparseable_in_scope(&u.section, &locked_sections) {
+                kept.push(u);
+            } else {
+                omitted += 1;
+            }
+        }
+        (kept, omitted)
+    } else {
+        (unparseable_formulas, 0)
+    };
+
     Ok(DriftResult {
         mismatched_contracts,
         missing_from_spec,
         missing_implementations,
         auto_inferred,
         unparseable_spec_contracts,
+        unparseable_formulas,
         unparseable_omitted_outside_scope,
+        unparseable_formulas_omitted_outside_scope,
     })
+}
+
+/// Same gate as **`spec_enrich`** for **`F_*`** bodies: **`extract_parseable_condition`** plus **`syn::Expr`** parse.
+pub(crate) fn formula_latex_parseable_for_verify(latex_body: &str) -> bool {
+    use crate::parser::condition;
+
+    let cond = latex_body.trim();
+    if cond.is_empty() {
+        return false;
+    }
+    let Some(parseable) = condition::extract_parseable_condition(cond) else {
+        return false;
+    };
+    syn::parse_str::<syn::Expr>(&parseable).is_ok()
+}
+
+fn trim_preview(s: &str, max_chars: usize) -> String {
+    let t = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let n = t.chars().count();
+    if n <= max_chars {
+        return t;
+    }
+    let take = max_chars.saturating_sub(3);
+    let short: String = t.chars().take(take).collect();
+    format!("{short}...")
 }
 
 /// `spec_section` is in scope if it equals or extends any `#[spec_locked]` section (dot-separated prefix).
@@ -155,7 +227,38 @@ fn spec_section_matches_lock(spec_section: &str, lock: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::spec_section_matches_lock;
+    use super::{formula_latex_parseable_for_verify, spec_section_matches_lock};
+
+    #[test]
+    fn formula_parse_gate_accepts_known_witness_style_body() {
+        assert!(formula_latex_parseable_for_verify("true"));
+        assert!(formula_latex_parseable_for_verify(r" x \leq y "));
+    }
+
+    #[test]
+    fn formula_parse_gate_accepts_cdot_times_unicode_comparison() {
+        assert!(formula_latex_parseable_for_verify(r"w \cdot h \leq z"));
+        assert!(formula_latex_parseable_for_verify(r"a × b ≤ c")); // × and ≤ Unicode
+        assert!(formula_latex_parseable_for_verify(r"\mathrm{X} >= 0"));
+    }
+
+    #[test]
+    fn formula_parse_gate_accepts_unicode_logic_ne_minus_implication() {
+        assert!(formula_latex_parseable_for_verify(r"p ≠ q")); // U+2260
+        assert!(formula_latex_parseable_for_verify(r"a − b ≤ c")); // U+2212 minus
+        assert!(formula_latex_parseable_for_verify(r"x ∧ y ≤ z")); // U+2227
+        assert!(formula_latex_parseable_for_verify(r"m ∨ n ≥ k")); // U+2228
+        assert!(formula_latex_parseable_for_verify(r"a ⇒ x ≤ y")); // Unicode ⇒ → conclusion `x <= y`
+    }
+
+    #[test]
+    fn formula_parse_gate_rejects_empty_or_pure_noise() {
+        assert!(!formula_latex_parseable_for_verify(""));
+        assert!(!formula_latex_parseable_for_verify("   "));
+        assert!(!formula_latex_parseable_for_verify(
+            "\\notProbablyValidRust blah"
+        ));
+    }
 
     #[test]
     fn section_prefix_does_not_match_sibling_minor() {
@@ -283,6 +386,24 @@ pub fn format_drift_human(result: &DriftResult) -> String {
         output.push('\n');
     }
 
+    if !result.unparseable_formulas.is_empty() {
+        output.push_str("⚠️  Unparseable **Formula** (`F_*`) bodies (enrich/verify parse gate failed):\n");
+        output.push_str("------------------------------------------------------------------\n");
+        for u in result.unparseable_formulas.iter().take(10) {
+            output.push_str(&format!(
+                "  {} §{}: {}\n",
+                u.id, u.section, u.body_preview
+            ));
+        }
+        if result.unparseable_formulas.len() > 10 {
+            output.push_str(&format!(
+                "  ... and {} more\n",
+                result.unparseable_formulas.len() - 10
+            ));
+        }
+        output.push('\n');
+    }
+
     output.push_str("Summary:\n");
     output.push_str("--------\n");
     output.push_str(&format!(
@@ -297,10 +418,20 @@ pub fn format_drift_human(result: &DriftResult) -> String {
         "  Unparseable spec contracts: {}\n",
         result.unparseable_spec_contracts.len()
     ));
+    output.push_str(&format!(
+        "  Unparseable **Formula** (`F_*`): {}\n",
+        result.unparseable_formulas.len()
+    ));
     if result.unparseable_omitted_outside_scope > 0 {
         output.push_str(&format!(
-            "  Unparseable outside scoped sections (omitted): {}\n",
+            "  Unparseable contracts outside scoped sections (omitted): {}\n",
             result.unparseable_omitted_outside_scope
+        ));
+    }
+    if result.unparseable_formulas_omitted_outside_scope > 0 {
+        output.push_str(&format!(
+            "  Unparseable formulas outside scoped sections (omitted): {}\n",
+            result.unparseable_formulas_omitted_outside_scope
         ));
     }
     output.push_str(&format!(
@@ -316,6 +447,7 @@ pub fn format_drift_human(result: &DriftResult) -> String {
         && result.missing_from_spec.is_empty()
         && result.missing_implementations.is_empty()
         && result.unparseable_spec_contracts.is_empty()
+        && result.unparseable_formulas.is_empty()
     {
         output.push_str("\n✅ No drift detected! Spec and implementation are in sync.\n");
     }
@@ -348,6 +480,12 @@ pub fn format_drift_json(result: &DriftResult) -> String {
         })).collect::<Vec<_>>(),
         "missing_implementations": result.missing_implementations,
         "unparseable_omitted_outside_scope": result.unparseable_omitted_outside_scope,
+        "unparseable_formulas": result.unparseable_formulas.iter().map(|u| serde_json::json!({
+            "id": u.id,
+            "section": u.section,
+            "body_preview": u.body_preview,
+        })).collect::<Vec<_>>(),
+        "unparseable_formulas_omitted_outside_scope": result.unparseable_formulas_omitted_outside_scope,
     })
     .to_string()
 }

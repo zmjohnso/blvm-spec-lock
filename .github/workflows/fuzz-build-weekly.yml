@@ -1,0 +1,30 @@
+# Optional **P2** smoke: lexer fuzz harness compiles (**`fuzz/`** is a standalone workspace — no **`cargo fuzz run`** here).
+#
+# Uses org **self-hosted** runners (**`builds`** pool), same labels as **`ci.yml`**.
+name: Fuzz harness (weekly build)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 06:42 UTC (~low contention)
+    - cron: '42 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-build-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: [self-hosted, Linux, X64, builds]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Builds **`blvm-spec-lock-core`** (path dep; **`z3`** linked by crate defaults) plus **`lexer_parse`** fuzz targets.
+      - name: cargo build fuzz workspace
+        run: cargo build --manifest-path fuzz/Cargo.toml --release -j 2 --locked

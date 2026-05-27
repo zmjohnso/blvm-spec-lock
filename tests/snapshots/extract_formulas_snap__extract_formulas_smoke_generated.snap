@@ -1,0 +1,32 @@
+---
+source: tests/extract_formulas_snap.rs
+expression: generated
+---
+//! Property test helpers generated from Orange Paper formulas
+//!
+//! This file is AUTO-GENERATED from blvm-spec/THE_ORANGE_PAPER.md
+//! DO NOT EDIT MANUALLY - changes should be made to Orange Paper
+//!
+//! To regenerate: cargo spec-lock extract-formulas
+//!
+//! These helpers allow property tests to compare implementation results
+//! against the mathematical formulas defined in the Orange Paper.
+
+use blvm_consensus::orange_paper_constants::*;
+#[cfg(test)]
+use proptest::prelude::*;
+
+/// Expected result from Orange Paper formula
+/// 
+/// Source: Orange Paper Section 43.0
+/// Formula: GetBlockSubsidy}(h) = 50 \cdot C
+/// 
+pub fn expected_getblocksubsidy_from_orange_paper(height: u64) -> i64 {
+        let halving_period = height / H;
+    let initial_subsidy = 50 * C;  // 50 BTC = 50 × C
+    if halving_period >= 64 {
+        0
+    } else {
+        initial_subsidy >> halving_period  // Uses Orange Paper formula: 50 × C × 2^(-⌊h/H⌋)
+    }
+}

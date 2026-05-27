@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/BTCDecoded/blvm-spec-lock/schemas/verify_report_v1.json",
+  "title": "blvm-spec-lock verify report v1",
+  "description": "Report emitted by cargo spec-lock verify (report_format 1)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["report_format", "command", "tool", "summary", "results"],
+  "properties": {
+    "report_format": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1
+    },
+    "command": {
+      "type": "string",
+      "const": "verify"
+    },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total", "passed", "failed", "partial", "no_contracts"],
+      "additionalProperties": true,
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "partial": { "type": "integer", "minimum": 0 },
+        "no_contracts": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "function", "status"],
+        "additionalProperties": true,
+        "properties": {
+          "file": { "type": "string" },
+          "function": { "type": "string" },
+          "section": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["passed", "failed", "partial", "not_implemented"]
+          },
+          "formula_anchor": { "type": "string" },
+          "constant_anchor": { "type": "string" },
+          "anchor_kind": {
+            "type": "string",
+            "description": "How #[spec_locked] bound this row: formula (F_*), constant (C_*), or traditional function/section",
+            "enum": ["function", "formula", "constant"]
+          },
+          "contract": { "type": "string" },
+          "reason": { "type": "string" },
+          "verified": { "type": "integer" },
+          "total": { "type": "integer" },
+          "detail": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "failure_kind": {
+                "type": "string",
+                "enum": [
+                  "counterexample",
+                  "parse_error",
+                  "solver_unknown",
+                  "solver_error",
+                  "tooling",
+                  "other"
+                ]
+              },
+              "partial_reason": {
+                "type": "string",
+                "enum": [
+                  "z3_unknown",
+                  "z3_timeout",
+                  "unsupported_translation",
+                  "missing_z3_build",
+                  "incomplete_coverage",
+                  "other"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

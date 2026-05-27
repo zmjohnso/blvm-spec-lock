@@ -1,0 +1,7 @@
+---
+source: tests/golden_spec.rs
+expression: format_parser_snapshot(&parser)
+---
+## section 4.99 | Golden consensus constants
+  const H = 210,000 | rust_expr=210_000 | rust_type=u64 | desc=halving interval in blocks)
+  const C = 10^8 | rust_expr=100_000_000 | rust_type=u64 | desc=satoshis per BTC)

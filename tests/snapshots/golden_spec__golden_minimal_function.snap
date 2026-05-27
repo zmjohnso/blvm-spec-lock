@@ -1,0 +1,10 @@
+---
+source: tests/golden_spec.rs
+expression: format_parser_snapshot(&parser)
+---
+## section 7.99 | Golden minimal function
+  fn TestFunc | signature=Some("h \\rightarrow r") | formulas=None
+    property Non-negative Ensures: $\text{result} \geq 0$
+    property Height-bound Ensures: $\text{height} \geq 0 \implies \text{result} \leq \text{MAX\_MONEY}$
+    contract Ensures: result \geq 0
+    contract Ensures: height \geq 0 \implies result \leq MAX\_MONEY

@@ -1,0 +1,7 @@
+---
+source: tests/golden_spec.rs
+expression: format_parser_snapshot(&parser)
+---
+## section 8.88 | Golden standalone property
+  standalone Golden round-trip | type=RoundTrip | outer=Some("OuterFunc") | inner=Some("InnerFunc") | constraint=None
+    formula_raw: \text{OuterFunc}(\text{InnerFunc}(x)) = x

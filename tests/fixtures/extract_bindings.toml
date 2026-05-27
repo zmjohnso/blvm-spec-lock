@@ -1,0 +1,4 @@
+[blvm_consensus.serialization]
+# Dummy resolver paths — integration test only verifies CLI + file emit; codegen falls through to `// TODO`.
+OuterFunc = "blvm_consensus::serialization::deserialize_dummy"
+InnerFunc = "blvm_consensus::serialization::serialize_dummy"

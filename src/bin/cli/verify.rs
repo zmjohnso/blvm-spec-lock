@@ -4,6 +4,7 @@
 
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use syn::{Attribute, File, ImplItem, ImplItemFn, ItemFn};
 use walkdir::WalkDir;
 
@@ -92,6 +93,10 @@ pub struct FunctionToVerify {
     pub function_name: String,
     pub contracts: Vec<Contract>,
     pub section: Option<String>,
+    /// When **`Some`**, **`#[spec_locked]`** named a **`F_*`** id (positional, combined, or `function =`).
+    pub formula_anchor: Option<String>,
+    /// When **`Some`**, **`#[spec_locked]`** named a **`C_*`** consensus-constant stable id (**`constants_stable_id_map`**).
+    pub constant_anchor: Option<String>,
     pub function_sig: Option<syn::ItemFn>, // Store function signature for type inference
 }
 
@@ -172,6 +177,8 @@ fn parse_file_for_functions(file_path: &std::path::Path) -> Result<Vec<FunctionT
                                 function_name: impl_fn.sig.ident.to_string(),
                                 contracts,
                                 section,
+                                formula_anchor: extract_formula_anchor(&impl_fn.attrs),
+                                constant_anchor: extract_constant_anchor(&impl_fn.attrs),
                                 function_sig: Some(item_fn),
                             });
                         }
@@ -198,6 +205,8 @@ fn make_function_to_verify(
         function_name: function_name.to_string(),
         contracts,
         section,
+        formula_anchor: extract_formula_anchor(attrs),
+        constant_anchor: extract_constant_anchor(attrs),
         function_sig: Some(func.clone()),
     }
 }
@@ -262,7 +271,108 @@ fn has_spec_locked(attrs: &[Attribute]) -> bool {
     })
 }
 
-/// Extract Orange Paper section from #[spec_locked] attribute (including inside #[cfg_attr(...)])
+/// Second literal anchored to **`F_*`** or **`C_*`** (`spec_locked("§", "F_x"|"C_x")`, `§::Id`, **`function = "…"`**, **`cfg_attr`** nests).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SecondarySpecAnchor {
+    Formula(String),
+    Constant(String),
+}
+
+fn classify_secondary_anchor(id: &str) -> Option<SecondarySpecAnchor> {
+    if id.starts_with("F_")
+        && id.len() > 2
+        && id[2..].chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Some(SecondarySpecAnchor::Formula(id.to_string()));
+    }
+    if id.starts_with("C_")
+        && id.len() > 2
+        && id[2..].chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Some(SecondarySpecAnchor::Constant(id.to_string()));
+    }
+    None
+}
+
+/// Extract **`F_*`** / **`C_*`** second anchor from **`#[spec_locked]`** / **`cfg_attr`**.
+pub fn extract_secondary_spec_anchor(attrs: &[Attribute]) -> Option<SecondarySpecAnchor> {
+    static RE_NAMED: OnceLock<regex::Regex> = OnceLock::new();
+    static RE_COMBO: OnceLock<regex::Regex> = OnceLock::new();
+    static RE_DUAL: OnceLock<regex::Regex> = OnceLock::new();
+
+    fn re_named() -> &'static regex::Regex {
+        RE_NAMED.get_or_init(|| {
+            regex::Regex::new(r#"function\s*=\s*"((?:F_|C_)[A-Za-z0-9_]+)""#)
+                .expect("secondary anchor named-regex")
+        })
+    }
+
+    fn re_combo() -> &'static regex::Regex {
+        RE_COMBO.get_or_init(|| {
+            regex::Regex::new(
+                r#"spec_locked\s*\(\s*"((?:\d+)(?:\.\d+)*)::((?:F_|C_)[A-Za-z0-9_]+)"\s*\)"#,
+            )
+            .expect("secondary anchor combo regex")
+        })
+    }
+
+    fn re_dual() -> &'static regex::Regex {
+        RE_DUAL.get_or_init(|| {
+            regex::Regex::new(r#"spec_locked\s*\(\s*"[^"]*"\s*,\s*"((?:F_|C_)[A-Za-z0-9_]+)""#)
+                .expect("secondary anchor dual regex")
+        })
+    }
+
+    for attr in attrs {
+        let path = attr.path();
+        let tokens = quote::quote!(#attr).to_string();
+
+        let is_direct = path.is_ident("spec_locked")
+            || (path.segments.len() == 2
+                && path.segments[0].ident == "blvm_spec_lock"
+                && path.segments[1].ident == "spec_locked");
+
+        let is_cfg_nested = path.is_ident("cfg_attr") && tokens.contains("spec_locked");
+
+        if !(is_direct || is_cfg_nested) {
+            continue;
+        }
+
+        if let Some(c) = re_named().captures(&tokens) {
+            if let Some(id) = c.get(1).and_then(|m| classify_secondary_anchor(m.as_str())) {
+                return Some(id);
+            }
+        }
+        if let Some(c) = re_combo().captures(&tokens) {
+            if let Some(id) = c.get(2).and_then(|m| classify_secondary_anchor(m.as_str())) {
+                return Some(id);
+            }
+        }
+        if let Some(c) = re_dual().captures(&tokens) {
+            if let Some(id) = c.get(1).and_then(|m| classify_secondary_anchor(m.as_str())) {
+                return Some(id);
+            }
+        }
+    }
+    None
+}
+
+/// Second literal anchored to **`F_*`** (`spec_locked("§", "F_x")`, `spec_locked("§::F_x")`,
+/// `function = "F_x"`, **`cfg_attr`** nests included).
+pub fn extract_formula_anchor(attrs: &[Attribute]) -> Option<String> {
+    match extract_secondary_spec_anchor(attrs) {
+        Some(SecondarySpecAnchor::Formula(id)) => Some(id),
+        _ => None,
+    }
+}
+
+/// **`#[spec_locked]`** second literal **`C_*`** (consensus stable id).
+pub fn extract_constant_anchor(attrs: &[Attribute]) -> Option<String> {
+    match extract_secondary_spec_anchor(attrs) {
+        Some(SecondarySpecAnchor::Constant(id)) => Some(id),
+        _ => None,
+    }
+}
 fn extract_section(attrs: &[Attribute]) -> Option<String> {
     for attr in attrs {
         let path = attr.path();
@@ -281,9 +391,19 @@ fn extract_section(attrs: &[Attribute]) -> Option<String> {
                 let after_spec = &tokens[spec_pos..];
                 if let Some(start) = after_spec.find('"') {
                     if let Some(end) = after_spec[start + 1..].find('"') {
-                        let section = &after_spec[start + 1..start + 1 + end];
-                        if section.chars().any(|c| c.is_ascii_digit()) {
-                            return Some(section.to_string());
+                        let section_raw = &after_spec[start + 1..start + 1 + end];
+                        if section_raw.chars().any(|c| c.is_ascii_digit()) {
+                            let section_normalized = section_raw.split_once("::").map_or_else(
+                                || section_raw.to_string(),
+                                |(lhs, rhs)| {
+                                    if rhs.starts_with("F_") || rhs.starts_with("C_") {
+                                        lhs.to_string()
+                                    } else {
+                                        section_raw.to_string()
+                                    }
+                                },
+                            );
+                            return Some(section_normalized);
                         }
                     }
                 }
@@ -389,10 +509,7 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
     // Early return if requires contracts failed
     if !failed_contracts.is_empty() {
         let (contract_type, reason) = &failed_contracts[0];
-        return VerificationResult::Failed {
-            contract: contract_type.clone(),
-            reason: format!("{} ({} total failures)", reason, failed_contracts.len()),
-        };
+        return failed_verification(contract_type, reason, failed_contracts.len());
     }
 
     // Now verify ensures contracts with the requires as context
@@ -497,26 +614,34 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
     // Report results
     if !failed_contracts.is_empty() {
         let (contract_type, reason) = &failed_contracts[0];
-        return VerificationResult::Failed {
-            contract: contract_type.clone(),
-            reason: format!("{} ({} total failures)", reason, failed_contracts.len()),
-        };
+        return failed_verification(contract_type, reason, failed_contracts.len());
     }
 
     if verified_count == function.contracts.len() {
         VerificationResult::Passed
     } else if requires_z3_count > 0 {
-        VerificationResult::Failed {
-            contract: "Z3".to_string(),
-            reason: format!(
-                "Z3 verification required but unavailable or incomplete ({} of {} verified). {}",
-                verified_count,
-                function.contracts.len(),
-                translation_error
-                    .into_inner()
-                    .as_deref()
-                    .unwrap_or("Build with --features z3 for full verification.")
-            ),
+        let trans_err = translation_error.into_inner();
+        let reason_msg = format!(
+            "Z3 verification required but unavailable or incomplete ({} of {} verified). {}",
+            verified_count,
+            function.contracts.len(),
+            trans_err
+                .as_deref()
+                .unwrap_or("Build with --features z3 for full verification.")
+        );
+        #[cfg(not(feature = "z3"))]
+        let partial_reason = PartialReason::MissingZ3Build;
+        #[cfg(feature = "z3")]
+        let partial_reason = if trans_err.is_some() {
+            PartialReason::UnsupportedTranslation
+        } else {
+            PartialReason::IncompleteCoverage
+        };
+        VerificationResult::Partial {
+            verified: verified_count,
+            total: function.contracts.len(),
+            reason: Some(reason_msg),
+            partial_reason: Some(partial_reason),
         }
     } else {
         VerificationResult::Passed
@@ -706,6 +831,132 @@ fn verify_with_z3(
     Err("Z3 feature not enabled. Build with --features z3 to enable Z3 verification.".to_string())
 }
 
+/// High-level classification for failed verification (JSON **`detail.failure_kind`**).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    /// Z3 found a satisfying assignment refuting the obligation (or static counterexample path).
+    Counterexample,
+    /// Contract text did not parse to a Rust expression / unsupported surface syntax.
+    ParseError,
+    /// Z3 returned **unknown** (including typical timeout wording from the solver wrapper).
+    SolverUnknown,
+    /// Z3 or translator returned an explicit error (not unknown/sat).
+    SolverError,
+    /// Build or feature issue (e.g. Z3 feature disabled).
+    Tooling,
+    /// Everything else (static messages, mixed failures).
+    Other,
+}
+
+impl FailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailureKind::Counterexample => "counterexample",
+            FailureKind::ParseError => "parse_error",
+            FailureKind::SolverUnknown => "solver_unknown",
+            FailureKind::SolverError => "solver_error",
+            FailureKind::Tooling => "tooling",
+            FailureKind::Other => "other",
+        }
+    }
+}
+
+/// Why a function is **partial** (JSON **`detail.partial_reason`** when set).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartialReason {
+    /// Wrapper reports Z3 unknown (may include timeout phrasing).
+    Z3Unknown,
+    /// Z3 **unknown** with timeout-style wording (**`failure_kind`** is still **`solver_unknown`**).
+    Z3Timeout,
+    /// Body or contract could not be translated to the solver (e.g. unimplemented MIR path).
+    UnsupportedTranslation,
+    /// Built without `z3` feature but obligations need the solver.
+    MissingZ3Build,
+    /// Solver available but not all contracts completed (budget / incomplete path).
+    IncompleteCoverage,
+    Other,
+}
+
+impl PartialReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PartialReason::Z3Unknown => "z3_unknown",
+            PartialReason::Z3Timeout => "z3_timeout",
+            PartialReason::UnsupportedTranslation => "unsupported_translation",
+            PartialReason::MissingZ3Build => "missing_z3_build",
+            PartialReason::IncompleteCoverage => "incomplete_coverage",
+            PartialReason::Other => "other",
+        }
+    }
+}
+
+fn solver_unknown_partial_reason(reason: &str) -> PartialReason {
+    let r = reason.to_lowercase();
+    if r.contains("timeout") || r.contains("timed out") || r.contains("time out") {
+        PartialReason::Z3Timeout
+    } else {
+        PartialReason::Z3Unknown
+    }
+}
+
+/// Build **`VerificationResult::Failed`** with optional **`partial_reason`** for **`solver_unknown`** rows.
+pub(crate) fn failed_verification(
+    contract_type: &str,
+    primary_reason: &str,
+    failed_contracts_len: usize,
+) -> VerificationResult {
+    let reason = format!("{primary_reason} ({failed_contracts_len} total failures)");
+    let kind = failure_kind(contract_type, &reason);
+    let partial_reason = if kind == FailureKind::SolverUnknown {
+        Some(solver_unknown_partial_reason(&reason))
+    } else {
+        None
+    };
+    VerificationResult::Failed {
+        contract: contract_type.to_string(),
+        reason,
+        kind,
+        partial_reason,
+    }
+}
+
+fn failure_kind(contract_type: &str, reason: &str) -> FailureKind {
+    let r = reason.to_lowercase();
+    let determinism_z3_unknown = r.contains("determinism")
+        && (r.contains("z3 unknown") || r.contains("z3 verification unknown"));
+    if r.contains("counterexample")
+        || r.contains("contract violated")
+        || r.contains("non-deterministic")
+        || ((r.contains("determinism") && !r.contains("could not translate"))
+            && !determinism_z3_unknown)
+    {
+        return FailureKind::Counterexample;
+    }
+    if r.contains("could not be parsed")
+        || r.contains("could not parse")
+        || r.contains("cannot verify: contract condition could not be parsed")
+        || reason.contains("Cannot verify: contract condition could not be parsed as expression")
+    {
+        return FailureKind::ParseError;
+    }
+    if r.contains("z3 unknown") || r.contains("z3 verification unknown") {
+        return FailureKind::SolverUnknown;
+    }
+    if r.contains("z3 error") || r.contains("z3 verification error") {
+        return FailureKind::SolverError;
+    }
+    if r.contains("z3 required but not built")
+        || r.contains("build blvm-spec-lock with --features z3")
+        || r.contains("z3 feature not enabled")
+    {
+        return FailureKind::Tooling;
+    }
+    if contract_type == "Z3" && r.contains("unknown") {
+        return FailureKind::SolverUnknown;
+    }
+    FailureKind::Other
+}
+
 /// Result of function verification
 #[derive(Debug, Clone)]
 pub enum VerificationResult {
@@ -713,11 +964,16 @@ pub enum VerificationResult {
     Failed {
         contract: String,
         reason: String,
+        kind: FailureKind,
+        /// When **`kind`** is **`solver_unknown`**: **`z3_unknown`** vs **`z3_timeout`** heuristic from message text (**JSON **`detail.partial_reason`**).
+        partial_reason: Option<PartialReason>,
     },
     Partial {
         verified: usize,
         total: usize,
         reason: Option<String>,
+        /// When **`Some`**, included in machine JSON under **`detail.partial_reason`**.
+        partial_reason: Option<PartialReason>,
     },
     /// No contracts from spec or code - cannot verify (add to Orange Paper or #[requires]/#[ensures])
     NoContracts {
@@ -725,3 +981,107 @@ pub enum VerificationResult {
     },
     NotImplemented,
 }
+
+#[cfg(test)]
+mod spec_locked_anchor_extract_tests {
+    use super::{
+        extract_constant_anchor, extract_formula_anchor, extract_section,
+    };
+    use syn::{parse_quote, ItemFn};
+
+    #[test]
+    fn dual_literal_extracts_formula_and_section() {
+        let f: ItemFn = parse_quote! {
+            #[spec_locked("9.91", "F_X")]
+            pub fn dummy() {}
+        };
+        assert_eq!(extract_formula_anchor(&f.attrs).as_deref(), Some("F_X"));
+        assert_eq!(extract_constant_anchor(&f.attrs), None);
+        assert_eq!(extract_section(&f.attrs).as_deref(), Some("9.91"));
+    }
+
+    #[test]
+    fn dual_literal_extracts_constant_and_section() {
+        let f: ItemFn = parse_quote! {
+            #[spec_locked("4.91", "C_SMK")]
+            pub fn dummy() {}
+        };
+        assert_eq!(extract_formula_anchor(&f.attrs), None);
+        assert_eq!(extract_constant_anchor(&f.attrs).as_deref(), Some("C_SMK"));
+        assert_eq!(extract_section(&f.attrs).as_deref(), Some("4.91"));
+    }
+
+    #[test]
+    fn combined_literal_section_and_formula() {
+        let f: ItemFn = parse_quote! {
+            #[spec_locked("44.44::F_C")]
+            pub fn dummy() {}
+        };
+        assert_eq!(extract_formula_anchor(&f.attrs).as_deref(), Some("F_C"));
+        assert_eq!(extract_constant_anchor(&f.attrs), None);
+        assert_eq!(extract_section(&f.attrs).as_deref(), Some("44.44"));
+    }
+
+    #[test]
+    fn combined_literal_section_and_constant() {
+        let f: ItemFn = parse_quote! {
+            #[spec_locked("44.44::C_K")]
+            pub fn dummy() {}
+        };
+        assert_eq!(extract_formula_anchor(&f.attrs), None);
+        assert_eq!(extract_constant_anchor(&f.attrs).as_deref(), Some("C_K"));
+        assert_eq!(extract_section(&f.attrs).as_deref(), Some("44.44"));
+    }
+
+    #[test]
+    fn named_function_param_extracts_formula() {
+        let f: ItemFn = parse_quote! {
+            #[spec_locked(section = "8.82", function = "F_Z")]
+            pub fn z() {}
+        };
+        assert_eq!(extract_formula_anchor(&f.attrs).as_deref(), Some("F_Z"));
+        assert_eq!(extract_constant_anchor(&f.attrs), None);
+        assert_eq!(extract_section(&f.attrs).as_deref(), Some("8.82"));
+    }
+
+    #[test]
+    fn named_function_param_extracts_constant() {
+        let f: ItemFn = parse_quote! {
+            #[spec_locked(section = "4.82", function = "C_Z")]
+            pub fn z() {}
+        };
+        assert_eq!(extract_formula_anchor(&f.attrs), None);
+        assert_eq!(extract_constant_anchor(&f.attrs).as_deref(), Some("C_Z"));
+        assert_eq!(extract_section(&f.attrs).as_deref(), Some("4.82"));
+    }
+}
+
+#[cfg(test)]
+mod failure_kind_tests {
+    use super::{failed_verification, failure_kind, FailureKind, PartialReason, VerificationResult};
+
+    #[test]
+    fn determinism_z3_unknown_is_solver_unknown_not_counterexample() {
+        let msg = "Determinism: Z3 unknown: Try --timeout 30. (1 total failures)";
+        assert_eq!(failure_kind("Ensures", msg), FailureKind::SolverUnknown);
+
+        match failed_verification("Ensures", "Determinism: Z3 unknown: Try --timeout 30.", 1) {
+            VerificationResult::Failed {
+                kind,
+                partial_reason,
+                ..
+            } => {
+                assert_eq!(kind, FailureKind::SolverUnknown);
+                assert_eq!(partial_reason, Some(PartialReason::Z3Timeout));
+            }
+            _ => panic!("expected Failed"),
+        }
+    }
+
+    #[test]
+    fn determinism_non_deterministic_stays_counterexample() {
+        let msg = "Determinism: Non-deterministic. Counterexample: [] (1 total failures)";
+        assert_eq!(failure_kind("Ensures", msg), FailureKind::Counterexample);
+    }
+}
+

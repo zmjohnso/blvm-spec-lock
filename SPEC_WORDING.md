@@ -9,6 +9,17 @@ Guidance for writing Orange Paper conditions that blvm-spec-lock can parse and v
 3. **Avoid noise** – Keep activation heights, URLs, and references in separate fields.
 4. **Bitwise vs logical** – Use `\land` for bitwise AND (e.g. `seq \land 0x00400000`); the parser maps it to Rust `&`.
 
+## Named formulas (F_* ids) — v1 authoring
+
+Orange Paper **named formulas** register stable **`F_*`** ids; **`cargo spec-lock verify`**, **`spec_enrich`**, and **`#[spec_locked]`** (proc-macro) resolve anchors that match **`^F_[A-Za-z0-9_]+$`** to **`SpecParser::formulas()`** before **`Function`** name lookup ([**`LOCKING_MECHANISM.md`**](docs/LOCKING_MECHANISM.md)).
+
+- **Header:** ``**Formula** (**F_YourId**):`` on one line — **`YourId`** must match **`[A-Za-z0-9_]+`** (full id **`F_…`**).
+- **Body:** the first **`$$ … $$`** block after the header becomes **`FormulaSpec.latex_body`** in **`SpecParser`** (trimmed inner text).
+- **Depends on:** optional prose after **`$$`**; machine-readable **`Depends on`** lines list bold **`F_*`** / **`C_*`** anchors into **`FormulaSpec::depends_on`** (non-normative; **`cargo spec-lock list-formulas`** echoes **`depends_on`** plus **`missing_f_refs`** / **`missing_c_refs`** — **`F_*`** / **`C_*`** absent from merged formula / §**4** constant sets). **`SpecParser::unresolved_formula_dependencies()`** and **`SpecParser::unresolved_constant_dependencies()`** pair **`formula_id`** with missing deps; **`merged_consensus_constant_ids()`** exposes stable **`C_*`** keys from **`$CONST = …$`** in **`4.*`** sections. **`verify`**, **`check-formulas`**, **`check-drift`**, **`coverage`**, **`summary`**, **`extract-constants`**, **`extract-formulas`**, and **`extract-property-tests`** emit stderr **`formula_id -> dep`** lines when **`F_*`** or **`C_*`** Depends on refs are unresolved.
+- **`#[spec_locked]`** — second literal or **`function = "F_..."`**, or **`"§::F_id"`**: lock § must **subsume** the formula heading § (**`13.3`** binds a formula authored under **`13.3.6`**, etc.). See **`blvm-consensus`** **`src/spec_lock_formula_witness.rs`** + **`PROTOCOL.md`** §**13.3.6** (**`F_SpecLockWitness`**) for a minimal end-to-end witness.
+
+**Rollout:** set **`SPEC_LOCK_FORMULAS=0`** (**`false`** / **`no`** / **`off`**) to skip formula ingestion (**`SpecParser::formulas()`** empty). Unset ⇒ formulas **on** (default). See **[`VERIFY_JSON.md`](docs/VERIFY_JSON.md)** (environment notes).
+
 ## Supported Patterns
 
 ### Result types
@@ -66,6 +77,10 @@ When prose is needed, use phrases the parser recognizes:
 The Orange Paper parser (`src/parser/orange_paper.rs`) translates properties via `translate_property_to_rust`:
 
 - `\land` → `&` (bitwise AND)
+- `\cdot`, `\cdotp`, `\times`, `\ast`, `\div` (and middot/multiplication-sign Unicode variants) normalize to arithmetic `*`, `/` for **`formula` / contract** lexer paths (**`formula_latex_parseable_for_verify`** gate)
+- Unicode pasted from PDFs: **`≠`** (`U+2260`), **`−`** minus (`U+2212`), **`∧` / `∨`** (`U+2227` / `U+2228`), **`→` / `⇒`** (strip to implication conclusion, same as ASCII **`=>`** heuristic), **`⇔` / `⟺`** → **`==`** for the lexer gate
+- `\mathrm{…}`, `\mathbf{…}`, `\mathit{…}`, `\mathsf{…}` → identifier (same as `\text`)
+- `\left(`, `\right)`, `\left.`, `\right.` sizing dropped to plain parentheses / stripped
 - `≥` → `>=`, `≤` → `<=`, `≠` → `!=`
 - `\text{FunctionName}(args)` → `result`
 - `\iff` → implication; conclusion is used for ensures
@@ -92,4 +107,4 @@ Put math signatures immediately after **`**Func**:`** or after **`(Updated):`**,
 - `SPEC_AS_SOURCE_OF_TRUTH.md` – How spec-derived contracts flow to verification
 - `SPEC_LOCK_COVERAGE.md` – Verification status and parseable %
 - `cargo spec-lock coverage --spec-path ...` – Theorems → contracts → parseable %
-- `cargo spec-lock check-drift --spec-path ...` – Unparseable contracts, missing impls
+- `cargo spec-lock check-drift --spec-path …` — Unparseable **Function** contracts; unparseable **`F_*`** **`$$`** bodies (**`--scoped-formulas`** when supported — same enrich/verify parse gate); **`--scoped-unparseables`** for §-scoped **Properties**

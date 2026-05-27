@@ -4,7 +4,10 @@
 //! Contracts are provided via manual #[requires] and #[ensures] attributes,
 //! which will be verified by the BLVM Spec Lock verification tool.
 
-use crate::parser::{FunctionSpec, SpecParser, SpecSection};
+use blvm_spec_lock_core::parser::{
+    section_id_subsumes_formula_section, Contract, ContractType, FunctionSpec, SpecParser,
+    SpecSection,
+};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use regex::Regex;
@@ -276,9 +279,9 @@ fn generate_ensures(spec: &FunctionSpec, func: &syn::ItemFn) -> TokenStream {
         // Skip Orange Paper contracts for tuple return types - they need special handling
         for contract in &spec.contracts {
             match contract.contract_type {
-                crate::parser::ContractType::Ensures
-                | crate::parser::ContractType::Property
-                | crate::parser::ContractType::EdgeCase => {
+                blvm_spec_lock_core::parser::ContractType::Ensures
+                | blvm_spec_lock_core::parser::ContractType::Property
+                | blvm_spec_lock_core::parser::ContractType::EdgeCase => {
                     // Translate mathematical notation to Rust contract
                     let rust_expr =
                         translate_math_to_rust_contract(&contract.condition, &spec.name, func);
@@ -298,7 +301,7 @@ fn generate_ensures(spec: &FunctionSpec, func: &syn::ItemFn) -> TokenStream {
                         #[blvm_spec_lock::ensures(#rust_expr)]#comment_tokens
                     });
                 }
-                crate::parser::ContractType::Requires => {
+                blvm_spec_lock_core::parser::ContractType::Requires => {
                     // Requires are handled in generate_requires
                 }
             }
@@ -317,7 +320,7 @@ fn generate_ensures(spec: &FunctionSpec, func: &syn::ItemFn) -> TokenStream {
         for property in &spec.properties {
             if matches!(
                 property.property_type,
-                crate::parser::PropertyType::Ensures | crate::parser::PropertyType::Invariant
+                blvm_spec_lock_core::parser::PropertyType::Ensures | blvm_spec_lock_core::parser::PropertyType::Invariant
             ) {
                 // Translate mathematical notation to Rust contract
                 let rust_expr =
@@ -504,8 +507,159 @@ pub fn process_spec_locked(
         }
     };
 
+    // Phase 5 — explicit **`Formula`** anchors **`F_*`** (never match **`Function`** entries).
+    let is_formula_anchor = func_name.strip_prefix("F_").is_some_and(|rest| {
+        !rest.is_empty()
+            && rest
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    });
+
+    let is_constant_anchor = func_name.strip_prefix("C_").is_some_and(|rest| {
+        !rest.is_empty()
+            && rest
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    });
+
     // NEW: Auto-inference logic - if no section provided, search everywhere
-    let (section, section_id, func_spec_opt) = if let Some(ref section_id_str) = args.section {
+    let (section, section_id, func_spec_opt) = if is_formula_anchor {
+        let Some(section_lit) = args.section.as_ref() else {
+            let msg = format!(
+                "#[spec_locked]: formula id `{func_name}` requires an explicit section (positional or named `section = …`)."
+            );
+            return proc_macro::TokenStream::from(quote! {
+                compile_error!(#msg);
+                #func
+            });
+        };
+        let lock_section = section_lit.value();
+        let Some(fspec) = parser.formulas().get(&func_name).cloned() else {
+            let msg = format!(
+                "#[spec_locked]: Orange Paper has no **Formula** id `{func_name}` in the merged spec."
+            );
+            return proc_macro::TokenStream::from(quote! {
+                compile_error!(#msg);
+                #func
+            });
+        };
+        if !section_id_subsumes_formula_section(&lock_section, &fspec.section) {
+            let msg = format!(
+                "#[spec_locked]: section §{lck} does not subsume formula `{fnm}` (defined under §{fsec}).",
+                lck = lock_section,
+                fnm = func_name,
+                fsec = fspec.section
+            );
+            return proc_macro::TokenStream::from(quote! {
+                compile_error!(#msg);
+                #func
+            });
+        }
+        let Some(spec_section_ref) = parser.find_section(&fspec.section) else {
+            let msg = format!(
+                "#[spec_locked]: formula `{fnm}` cites missing section §{fsec} in parsed spec.",
+                fnm = func_name,
+                fsec = fspec.section
+            );
+            return proc_macro::TokenStream::from(quote! {
+                compile_error!(#msg);
+                #func
+            });
+        };
+        let func_spec_static: &'static FunctionSpec = Box::leak(Box::new(FunctionSpec {
+            name: fspec.id.clone(),
+            section: fspec.section.clone(),
+            signature: None,
+            formula: None,
+            description: Some(format!(
+                "Named formula `{}` (Orange Paper Formula block)",
+                fspec.id
+            )),
+            conditions: vec![],
+            theorems: vec![],
+            contracts: vec![Contract {
+                contract_type: ContractType::Ensures,
+                condition: fspec.latex_body.clone(),
+                comment: Some("Formula (F_*) anchor".into()),
+            }],
+            properties: vec![],
+            content: String::new(),
+        }));
+        (spec_section_ref, lock_section, Some(func_spec_static))
+    } else if is_constant_anchor {
+        let Some(section_lit) = args.section.as_ref() else {
+            let msg = format!(
+                "#[spec_locked]: constant id `{func_name}` requires an explicit section (positional or named `section = …`)."
+            );
+            return proc_macro::TokenStream::from(quote! {
+                compile_error!(#msg);
+                #func
+            });
+        };
+        let lock_section = section_lit.value();
+        let cmap = match parser.constants_stable_id_map() {
+            Ok(m) => m,
+            Err(e) => {
+                let error_msg = format!("#[spec_locked]: constant index build failed: {e}");
+                return proc_macro::TokenStream::from(quote! {
+                    compile_error!(#error_msg);
+                    #func
+                });
+            }
+        };
+        let Some(ec) = cmap.get(&func_name).cloned() else {
+            let msg = format!(
+                "#[spec_locked]: Orange Paper has no **`C_*`** id `{func_name}` (Section 4 **$NAME = value$** extract)."
+            );
+            return proc_macro::TokenStream::from(quote! {
+                compile_error!(#msg);
+                #func
+            });
+        };
+        if !section_id_subsumes_formula_section(&lock_section, &ec.section) {
+            let msg = format!(
+                "#[spec_locked]: section §{lck} does not subsume constant `{fnm}` (extracted under §{csec}).",
+                lck = lock_section,
+                fnm = func_name,
+                csec = ec.section
+            );
+            return proc_macro::TokenStream::from(quote! {
+                compile_error!(#msg);
+                #func
+            });
+        }
+        let Some(spec_section_ref) = parser.find_section(&ec.section) else {
+            let msg = format!(
+                "#[spec_locked]: constant `{fnm}` cites missing section §{csec} in parsed spec.",
+                fnm = func_name,
+                csec = ec.section
+            );
+            return proc_macro::TokenStream::from(quote! {
+                compile_error!(#msg);
+                #func
+            });
+        };
+        let condition = format!("result == {}", ec.rust_expr);
+        let func_spec_static: &'static FunctionSpec = Box::leak(Box::new(FunctionSpec {
+            name: func_name.clone(),
+            section: ec.section.clone(),
+            signature: None,
+            formula: None,
+            description: Some(format!(
+                "Named consensus constant `{func_name}` (Orange Paper §4 extract)"
+            )),
+            conditions: vec![],
+            theorems: vec![],
+            contracts: vec![Contract {
+                contract_type: ContractType::Ensures,
+                condition,
+                comment: Some("Constant (C_*) anchor".into()),
+            }],
+            properties: vec![],
+            content: String::new(),
+        }));
+        (spec_section_ref, lock_section, Some(func_spec_static))
+    } else if let Some(ref section_id_str) = args.section {
         // Section ID provided (could be "6.1" or "6.1.1")
         let section_id_value = section_id_str.value();
 

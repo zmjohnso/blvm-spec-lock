@@ -1,0 +1,21 @@
+[package]
+name = "blvm-spec-lock-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+blvm-spec-lock-core = { path = "../crates/blvm-spec-lock-core" }
+
+[[bin]]
+name = "lexer_parse"
+path = "fuzz_targets/lexer_parse.rs"
+test = false
+doc = false
+bench = false

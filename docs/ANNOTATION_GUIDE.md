@@ -88,4 +88,4 @@ The spec parser matches by name (PascalCase ↔ snake_case). If no exact match, 
 - [SPEC_WORDING.md](../SPEC_WORDING.md) — Parseable condition patterns (use these when adding spec Properties)
 - [SPEC_AS_SOURCE_OF_TRUTH.md](../SPEC_AS_SOURCE_OF_TRUTH.md) — Contract flow
 - [SPEC_LOCK_COVERAGE.md](../SPEC_LOCK_COVERAGE.md) — Current status
-- **Verification roadmap** — In a full Bitcoin Commons workspace, the sibling tree has `docs/VERIFICATION_COVERAGE_TRACKING.md` (not shipped in this crate). Prefer **`SPEC_LOCK_COVERAGE.md`** and **`cargo spec-lock coverage`** for current numbers.
+- Prefer **`SPEC_LOCK_COVERAGE.md`** and **`cargo spec-lock coverage`** over any external unpublished tracking notes — if you clone only **`blvm-spec-lock`**, this repo is authoritative for coverage tooling.

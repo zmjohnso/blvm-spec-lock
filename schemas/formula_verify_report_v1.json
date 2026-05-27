@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/BTCDecoded/blvm-spec-lock/schemas/formula_verify_report_v1.json",
+  "title": "blvm-spec-lock verify-formulas report v1",
+  "description": "Report emitted by cargo spec-lock verify-formulas (report_format 1, command verify-formulas). Not verify (no Rust witness).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["report_format", "command", "tool", "summary", "results"],
+  "properties": {
+    "report_format": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1
+    },
+    "command": {
+      "type": "string",
+      "const": "verify-formulas"
+    },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "static_pass": { "type": "integer", "minimum": 0 },
+        "static_fail": { "type": "integer", "minimum": 0 },
+        "z3_sat_requested": { "type": "boolean" },
+        "z3_sat_build_available": { "type": "boolean" },
+        "z3_sat_effective": { "type": "boolean" },
+        "z3_sat_pass": { "type": "integer", "minimum": 0 },
+        "z3_sat_unsat": { "type": "integer", "minimum": 0 },
+        "z3_sat_unknown": { "type": "integer", "minimum": 0 },
+        "z3_sat_error": { "type": "integer", "minimum": 0 },
+        "z3_skipped_due_to_static": { "type": "integer", "minimum": 0 },
+        "z3_skipped_no_z3_build": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["formula_id", "section", "static", "z3_sat"],
+        "additionalProperties": true,
+        "properties": {
+          "formula_id": { "type": "string" },
+          "section": { "type": "string" },
+          "static": {
+            "type": "object",
+            "properties": {
+              "status": { "type": "string", "enum": ["passed", "failed"] },
+              "detail": {}
+            },
+            "additionalProperties": true
+          },
+          "z3_sat": {}
+        }
+      }
+    }
+  }
+}

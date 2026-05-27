@@ -26,6 +26,10 @@ All point to valid Orange Paper sections. With **`PROTOCOL.md` + `ARCHITECTURE.m
 
 **Parseable / contract totals:** run **`cargo spec-lock coverage`** (human or **`--format json`**) instead of freezing numbers in prose. Example (this checkout): **168** impl functions with contracts, **433** parseable contracts, **100%** parseable rate for **blvm-consensus**.
 
+Without **`--spec-path`**, **`coverage`** reports **Rust inventory** only (impl counts, per-section listing). **`--format json`** carries **`total_spec_locked`**, **`with_contracts`**, **`formulas_*`**, **`formula_anchor_*`**, **`constants_defined`**, **`constants_bound_to_rust`**, **`formulas_verify_rollup`**, **`constants_verify_rollup`** (registry-derived **`formulas_*` / `formula_anchor_*` / `constants_defined`** default to **`0`** without a merged spec; **`formulas_bound_to_rust`**, **`constants_bound_to_rust`**, and rollup objects may still be filled from **`--rollup-from-verify-json`** when passed).
+
+With **`--spec-path`**, the CLI prints **spec coverage** (theorems → contracts → parseable). **`--format json`** fills formula and constant anchor metrics from the merged spec (**same **`F_*`** parse gate as **`check-drift`** **`F_*`** rows**). Optionally **`--rollup-from-verify-json`** adds verify-attested rollups keyed by **`formula_anchor`** / **`constant_anchor`** rows. See **[docs/COVERAGE_JSON.md](docs/COVERAGE_JSON.md)**.
+
 ## Locked Sections by Orange Paper
 
 The **168** consensus locks map to these spec sections (each section may have multiple functions):

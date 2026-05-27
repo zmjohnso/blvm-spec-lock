@@ -54,3 +54,50 @@ fn wrong_implementation_fails_verification() {
         "Output should mention get_block_subsidy.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 }
+
+fn no_section_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/no_section_attribute")
+}
+
+#[test]
+fn bare_spec_locked_without_section_reports_no_contracts() {
+    let crate_path = no_section_fixture_path();
+    assert!(
+        crate_path.exists(),
+        "no_section_attribute fixture missing at {}",
+        crate_path.display()
+    );
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let golden = manifest_dir.join("tests/golden/minimal_function.md");
+    let output = Command::new("cargo")
+        .args([
+            "run",
+            "--features",
+            "z3",
+            "--bin",
+            "cargo-spec-lock",
+            "--",
+            "verify",
+            "--crate-path",
+            crate_path.to_str().unwrap(),
+            "--spec-path",
+            golden.to_str().unwrap(),
+        ])
+        .current_dir(&manifest_dir)
+        .output()
+        .expect("cargo spec-lock verify");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        !output.status.success(),
+        "Verify should FAIL when #[spec_locked] has no § link (NoContracts).\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    assert!(
+        stdout.contains("no contracts") || stderr.contains("no contracts"),
+        "Human report should surface no-contracts failure.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}

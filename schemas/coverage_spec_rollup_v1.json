@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/BTCDecoded/blvm-spec-lock/schemas/coverage_spec_rollup_v1.json",
+  "title": "blvm-spec-lock coverage spec rollup JSON (--spec-path set)",
+  "description": "Emitted by `cargo spec-lock coverage --format json` when `--spec-path` loads the Orange Paper (theorems/contracts + formula registry rollup).",
+  "type": "object",
+  "additionalProperties": true,
+  "$defs": {
+    "witness_verify_rollup_v1": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["passed", "failed", "partial", "not_implemented", "total"],
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "partial": { "type": "integer", "minimum": 0 },
+        "not_implemented": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "required": [
+    "total_spec_functions",
+    "total_contracts",
+    "parseable_contracts",
+    "unparseable_contracts",
+    "parseable_percent",
+    "impl_with_contracts",
+    "impl_without_contracts",
+    "formulas_defined",
+    "formulas_parseable_body",
+    "formulas_bound_to_rust",
+    "formula_anchor_parse_gate_ok",
+    "formula_anchor_spec_missing_id",
+    "formula_anchor_unparseable_body",
+    "constants_defined",
+    "constants_bound_to_rust",
+    "formulas_verify_rollup",
+    "constants_verify_rollup",
+    "by_section"
+  ],
+  "properties": {
+    "total_spec_functions": { "type": "integer", "minimum": 0 },
+    "total_contracts": { "type": "integer", "minimum": 0 },
+    "parseable_contracts": { "type": "integer", "minimum": 0 },
+    "unparseable_contracts": { "type": "integer", "minimum": 0 },
+    "parseable_percent": { "type": "number" },
+    "impl_with_contracts": { "type": "integer", "minimum": 0 },
+    "impl_without_contracts": { "type": "integer", "minimum": 0 },
+    "formulas_defined": { "type": "integer", "minimum": 0 },
+    "formulas_parseable_body": { "type": "integer", "minimum": 0 },
+    "formulas_bound_to_rust": { "type": "integer", "minimum": 0 },
+    "formula_anchor_parse_gate_ok": { "type": "integer", "minimum": 0 },
+    "formula_anchor_spec_missing_id": { "type": "integer", "minimum": 0 },
+    "formula_anchor_unparseable_body": { "type": "integer", "minimum": 0 },
+    "constants_defined": { "type": "integer", "minimum": 0 },
+    "constants_bound_to_rust": { "type": "integer", "minimum": 0 },
+    "formulas_verify_rollup": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/witness_verify_rollup_v1" }]
+    },
+    "constants_verify_rollup": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/witness_verify_rollup_v1" }]
+    },
+    "by_section": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "section",
+          "spec_functions",
+          "contracts_total",
+          "contracts_parseable",
+          "impl_functions",
+          "unparseable_examples"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "section": { "type": "string" },
+          "spec_functions": { "type": "integer", "minimum": 0 },
+          "contracts_total": { "type": "integer", "minimum": 0 },
+          "contracts_parseable": { "type": "integer", "minimum": 0 },
+          "impl_functions": { "type": "integer", "minimum": 0 },
+          "unparseable_examples": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

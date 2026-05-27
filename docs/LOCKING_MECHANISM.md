@@ -23,9 +23,9 @@ Locking prevents specification drift: if the spec changes, verification fails un
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 2. ENRICH (when --spec-path provided)                                        │
-│    Parse Orange Paper, extract FunctionName + Properties / Invariants        │
-│    Match by name (PascalCase ↔ snake_case), fallback to section first fn   │
-│    Replace manual #[requires]/#[ensures] with spec-derived contracts       │
+│    Parse Orange Paper: **Functions** (+ Properties / Invariants) OR explicit │
+│    **`F_*`** **Formula** blocks when `#[spec_locked]` anchors a formula id │
+│    Match by name / section; replace manual attrs with derived contracts       │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
@@ -64,6 +64,13 @@ pub fn get_block_subsidy(height: u64) -> i64 { ... }
 #[spec_locked(section = "6.1", function = "GetBlockSubsidy")]
 pub fn get_block_subsidy(height: u64) -> i64 { ... }
 
+// Explicit **Orange Paper Formula** id (`**Formula** (**F_*`)` block)
+#[spec_locked("6.1", "F_SubsidyHalf")]
+pub fn witness_subsidy_property(height: u64) -> i64 { ... }
+// Same anchor in combined shorthand:
+#[spec_locked("6.1::F_SubsidyHalf")]
+pub fn witness_subsidy_property(height: u64) -> i64 { ... }
+
 // Auto-infer section from function name (searches entire spec)
 #[spec_locked]
 pub fn get_block_subsidy(height: u64) -> i64 { ... }
@@ -78,6 +85,15 @@ pub fn get_block_subsidy(height: u64) -> i64 { ... }
 
 When `--spec-path` is provided, contracts come **only** from the spec. Manual `#[requires]`/`#[ensures]` are ignored. Without `--spec-path`, only manual attributes are used.
 
+## Named formulas (stable `F_*` ids)
+
+Authoring lines use **`Formula`** headings with **`F_Id`** identifiers and **`$$ … $$`** display math — details in **`SPEC_WORDING.md`**.
+
+- **`#[spec_locked("X.Y", "F_Id")]`**, **`X.Y::F_Id`**, or **`function = "F_Id"`** resolve to the **`Formula`** registry (**`cargo spec-lock list-formulas`** prints **TSV**: **`id`**, **`section`**, **`parse_gate`** (`ok`/`fail`), comma-separated **`depends_on`**, comma-separated **`missing_f_refs`** (**`F_*`** under **Depends on** missing after **`merge`**), comma-separated **`missing_c_refs`** (**`C_*`** under **Depends on** absent from merged §**4** **`$CONST = …$`** excerpts), condensed **`latex_body`**).
+- **Unresolved **`F_*`** / **`C_*`** Depends on refs** — **`F_*`** absent from merged formula registry; **`C_*`** absent from merged §**4** **`$CONST = …$`** excerpts: **`verify`**, **`check-formulas`**, **`check-drift`**, **`coverage`**, **`summary`**, **`extract-constants`**, **`extract-formulas`**, **`extract-property-tests`** print stderr **`formula_id → dep`** (**non‑fatal**); **`list-formulas`** **`missing_f_refs`** / **`missing_c_refs`** columns.
+- The **`#[spec_locked]`** section id must subsume the formula’s section heading id: exact match **or** the formula id extends it with **`.\`** and further segments (**`5.4`** anchors may bind **`Formula`** blocks under **`5.4.1`**, **`5.4.2`**, …).
+- **`$$`** bodies go through **`extract_parseable_condition`**. When no Rust-ish obligation is derived, enrichment adds **nothing** for that **`F_*`** (no **`ensures(true)`** placeholder for anchored formulas).
+
 ## Verification Modes
 
 | Mode | When | What it does |
@@ -87,18 +103,29 @@ When `--spec-path` is provided, contracts come **only** from the spec. Manual `#
 
 Use Z3 for full verification. Static mode is a fallback when Z3 is not available.
 
+**Experimental codegen:** **`cargo spec-lock extract-formulas`** and **`extract-property-tests`** emit **heuristic** Rust snippets. They are **not** **`verify`**, are **not** a substitute for **`check-formulas`** / **`verify`**, and should **not** gate releases until the tool defines a tested output contract tracked in-repo (**issues**, **`README`** — **`extract_cmds_integration`** is a minimal smoke only).
+
 Per-function solver time can be raised with **`--timeout <secs>`** on **`verify`**, or with **`SPEC_LOCK_Z3_TIMEOUT_SECS`** in the environment (overrides **`--timeout`** when set to a positive integer), which helps when Orange Paper **Properties** are richer and Z3 returns **Unknown** under the default budget.
 
 ## Status Semantics
 
 | Status | Meaning |
 |--------|---------|
-| **Passed** | All contracts verified (Z3 proved) |
-| **Failed** | Z3 found a counterexample — implementation violates spec |
-| **Partial** | Some contracts verified, others not (e.g. Z3 Unknown, unsupported expr) |
-| **NoContracts** | No spec-derived contracts; add Properties to Orange Paper or manual attributes |
+| **Passed** | All contracts verified for that function (static check and/or Z3 as applicable) |
+| **Failed** | At least one obligation **refuted** or a hard error (parse failure, solver error, etc.). Machine-readable **`failure_kind`** is in JSON **`results[].detail.failure_kind`** when present. For **`solver_unknown`**, JSON may add **`detail.partial_reason`** (**`z3_timeout`** vs **`z3_unknown`**) from message text. |
+| **Partial** | Solver or pipeline could not complete all obligations (missing Z3 build, incomplete coverage, unsupported translation, …). **`detail.partial_reason`** in JSON when the tool classifies it. |
+| **NoContracts** | No spec-derived contracts for the function; add Properties to Orange Paper or `#[requires]` / `#[ensures]`. |
 
-**Strict mode** (`--strict`): Fails the run on any Partial or NoContracts. Use in CI to enforce full lock coverage.
+### Exit codes (`cargo spec-lock verify`)
+
+| Condition | Default (no strict) | `--strict` or `SPEC_LOCK_STRICT=1` |
+|-----------|---------------------|--------------------------------------|
+| Any **Failed** | 1 | 1 |
+| Any **NoContracts** | 1 | 1 |
+| Any **Partial** (and no failures above) | 0 | 1 |
+| All **Passed** | 0 | 0 |
+
+**Strict mode** — **`--strict`** or **`SPEC_LOCK_STRICT=1`**: treat **Partial** as a failing outcome (exit **1**) so CI does not green-light incomplete Z3 coverage. **NoContracts** and **Failed** fail the process regardless of strict. See **[VERIFY_JSON.md](VERIFY_JSON.md)** for the structured report alongside exit codes.
 
 ## Section Matching
 

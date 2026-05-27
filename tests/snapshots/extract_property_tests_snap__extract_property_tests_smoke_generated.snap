@@ -1,0 +1,12 @@
+---
+source: tests/extract_property_tests_snap.rs
+expression: generated
+---
+//! AUTO-GENERATED from Orange Paper - DO NOT EDIT
+//! Run: cargo spec-lock extract-property-tests --spec-path ... --output ...
+
+#![cfg(test)]
+#![cfg(feature = "property-tests")]
+use proptest::prelude::*;
+
+// TODO: Golden round-trip - add strategy

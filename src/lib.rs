@@ -30,13 +30,11 @@
 //! 2. Parses the specified section
 //! 3. Links function to spec (contracts come from manual annotations or Orange Paper)
 
-// Parser/translator types are used by the binary (cargo-spec-lock); lib is proc-macro only.
+// Parser/translator live in blvm_spec_lock_core; lib is proc-macro + placeholders.
 #![allow(dead_code)]
 
 mod macro_impl;
-mod parser;
 mod report;
-mod translator;
 // CLI module is only used by the binary, not the library
 
 // Note: Proc-macro crates cannot export regular items.

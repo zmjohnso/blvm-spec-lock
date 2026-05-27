@@ -8,11 +8,8 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-// Include library modules (using path to access them from binary)
-#[path = "../parser/mod.rs"]
-mod parser;
-#[path = "../translator/mod.rs"]
-mod translator;
+// Re-export so `crate::parser` / `crate::translator` keep working inside `cli::…`.
+pub use blvm_spec_lock_core::{parser, translator};
 
 // Include CLI modules (they're in src/bin/cli/)
 mod cli;
@@ -54,6 +51,40 @@ fn resolve_spec_paths(spec_paths: Vec<PathBuf>) -> Vec<PathBuf> {
             .collect();
     }
     Vec::new()
+}
+
+/// When **`Depends on`** cites missing **`F_*`** / **`C_*`**, or **defined **`F_*`→`F_*`** edges form a cycle** (informational).
+fn warn_formula_dep_diagnostics(parser: &parser::orange_paper::SpecParser, context_label: &str) {
+    let uf = parser.unresolved_formula_dependencies();
+    let uc = parser.unresolved_constant_dependencies();
+    if !uf.is_empty() {
+        eprintln!(
+            "{context_label}: warning: {} **`F_*`** **Depends on** reference(s) missing from merged formula registry:",
+            uf.len(),
+        );
+        for (formula_id, dep) in &uf {
+            eprintln!("    {formula_id} -> {dep}");
+        }
+    }
+    if !uc.is_empty() {
+        eprintln!(
+            "{context_label}: warning: {} **`C_*`** **Depends on** reference(s) missing from merged consensus-constant set (§**4** excerpts in `--spec-path` merge):",
+            uc.len(),
+        );
+        for (formula_id, dep) in &uc {
+            eprintln!("    {formula_id} -> {dep}");
+        }
+    }
+
+    let cycles = cli::formula_dep_graph::find_formula_id_cycles(parser.formulas());
+    if !cycles.is_empty() {
+        eprintln!(
+            "{context_label}: warning: cyclic **`F_*`→`F_*`** **Depends on** among defined formulas (informational):",
+        );
+        for c in &cycles {
+            eprintln!("    {}", c.join(" -> "));
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -100,6 +131,10 @@ enum Commands {
         #[arg(long, num_args = 1.., value_delimiter = ',')]
         spec_path: Vec<PathBuf>,
 
+        /// Write verify JSON report (same as `--format json`, `report_format` 1) to PATH in addition to stdout (any `--format`, e.g. human + sidecar JSON for CI).
+        #[arg(long, value_name = "PATH")]
+        json_out: Option<PathBuf>,
+
         // Positional args must be last so `--spec-path` and other flags parse correctly.
         /// Files to verify (default: all files in crate)
         files: Vec<String>,
@@ -115,9 +150,50 @@ enum Commands {
         #[arg(long, num_args = 1.., value_delimiter = ',')]
         spec_path: Vec<PathBuf>,
 
+        /// Optional **`cargo spec-lock verify`** **`report_format` 1** JSON path — adds **`formulas_verify_rollup`** /
+        /// **`constants_verify_rollup`** (rows with **`formula_anchor`** / **`constant_anchor`**).
+        #[arg(long, value_name = "PATH")]
+        rollup_from_verify_json: Option<PathBuf>,
+
         /// Output format
         #[arg(long, default_value = "human")]
         format: OutputFormat,
+    },
+
+    /// **`F_*`** formula registry: static LaTeX→Rust enrich/verify gate; optional Z3 SAT smoke per formula (**no Rust** witness).
+    /// Use **`verify-formulas --format json --json-out …`** when CI needs machine-readable output (`command` == `verify-formulas`; **not** `verify`).
+    #[command(name = "verify-formulas")]
+    VerifyFormulas {
+        /// Path to Orange Paper (can pass multiple: --spec-path A B or --spec-path A,B)
+        #[arg(long, num_args = 1.., value_delimiter = ',')]
+        spec_path: Vec<PathBuf>,
+        /// Per-formula Z3 timeout (seconds) when SAT smoke runs (requires `--features z3` and no `--skip-z3`).
+        #[arg(long, default_value = "10")]
+        timeout: u64,
+        /// Static gate **only** (skip Z3 SAT smoke even when **`z3`** is enabled).
+        #[arg(long)]
+        skip_z3: bool,
+
+        #[arg(long, default_value = "human")]
+        format: OutputFormat,
+
+        /// Write **`verify-formulas`** JSON (**`report_format` 1**) in addition to **`--format`** stdout.
+        #[arg(long, value_name = "PATH")]
+        json_out: Option<PathBuf>,
+    },
+
+    /// [experimental] Check every **`Formula` (`F_*`)** body parses for enrich/verify (no Rust/Z3 — static gate beyond drift).
+    /// With **`--z3-sat`**, after static success, run a lightweight Z3 **satisfiability** smoke test (LaTeX → Z3, no implementation).
+    CheckFormulas {
+        /// Path to Orange Paper (can pass multiple: --spec-path A B or --spec-path A,B)
+        #[arg(long, num_args = 1.., value_delimiter = ',')]
+        spec_path: Vec<PathBuf>,
+        /// Z3: check translated formula is satisfiable (contradictions like `x < x` fail).
+        #[arg(long)]
+        z3_sat: bool,
+        /// Per-formula Z3 timeout (seconds) when **`--z3-sat`** is set.
+        #[arg(long, default_value = "5")]
+        timeout: u64,
     },
 
     /// List all spec-locked functions
@@ -150,6 +226,15 @@ enum Commands {
         format: String,
     },
 
+    /// [experimental] List named **`F_*`** formulas (**v1** `**Formula**` blocks in merged **`--spec-path`**).
+    ///
+    /// Emits tab-separated stdout; prints **warnings to stderr** for missing **`Depends on`** refs and **cyclic **`F_*`→`F_*`** edges** among defined formulas (informational — same as other **`--spec-path`** commands; exit **0** unless parse fails).
+    ListFormulas {
+        /// Path to Orange Paper (can pass multiple: --spec-path A B or --spec-path A,B)
+        #[arg(long, num_args = 1.., value_delimiter = ',')]
+        spec_path: Vec<PathBuf>,
+    },
+
     /// Check for spec drift (Orange Paper vs implementation)
     CheckDrift {
         /// Path to Orange Paper (can pass multiple: --spec-path A B or --spec-path A,B)
@@ -164,6 +249,10 @@ enum Commands {
         /// `#[spec_locked]` attribute in the scanned crate (prefix match, e.g. lock `5.1` includes `5.1.2`).
         #[arg(long)]
         scoped_unparseables: bool,
+
+        /// Same prefix rule as **`--scoped-unparseables`**, but for **`Formula` (`F_*`)** **`$$`** bodies that fail the **verify**/enrich parse gate (**`extract_parseable_condition`** + **`syn::Expr`**).
+        #[arg(long)]
+        scoped_formulas: bool,
 
         /// Output format
         #[arg(long, default_value = "human")]
@@ -181,7 +270,8 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// Extract formulas from Orange Paper and generate property test helpers
+    /// [experimental] Extract formulas from Orange Paper and generate property test helpers.
+    /// Heuristic codegen only — not **`verify`** and not a release assurance path until covered by tests.
     ExtractFormulas {
         /// Path to Orange Paper (can pass multiple: --spec-path A B or --spec-path A,B)
         #[arg(long, num_args = 1.., value_delimiter = ',')]
@@ -192,7 +282,8 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// Extract property tests from Orange Paper round-trip properties
+    /// [experimental] Extract property tests from Orange Paper round-trip properties.
+    /// Heuristic codegen only — not **`verify`** and not a release assurance path until covered by tests.
     ExtractPropertyTests {
         /// Path to Orange Paper (can pass multiple: --spec-path A B or --spec-path A,B)
         #[arg(long, num_args = 1.., value_delimiter = ',')]
@@ -228,6 +319,7 @@ struct VerifyArgs {
     strict: bool,
     spec_paths: Vec<PathBuf>,
     timeout_secs: u64,
+    json_out: Option<PathBuf>,
 }
 
 impl std::str::FromStr for OutputFormat {
@@ -262,6 +354,7 @@ fn main() {
             strict,
             spec_path,
             files,
+            json_out,
         } => handle_verify(VerifyArgs {
             crate_path: resolve_crate_path(crate_path),
             files,
@@ -272,14 +365,17 @@ fn main() {
             strict,
             spec_paths: resolve_spec_paths(spec_path),
             timeout_secs: timeout,
+            json_out,
         }),
         Commands::Coverage {
             crate_path,
             spec_path,
+            rollup_from_verify_json,
             format,
         } => handle_coverage(
             resolve_crate_path(crate_path),
             resolve_spec_paths(spec_path),
+            rollup_from_verify_json,
             format,
         ),
         Commands::List {
@@ -296,17 +392,38 @@ fn main() {
             resolve_spec_paths(spec_path),
             format,
         ),
+        Commands::ListFormulas { spec_path } => handle_list_formulas(resolve_spec_paths(spec_path)),
         Commands::CheckDrift {
             spec_path,
             crate_path,
             scoped_unparseables,
+            scoped_formulas,
             format,
         } => handle_check_drift(
             resolve_spec_paths(spec_path),
             resolve_crate_path(crate_path),
             scoped_unparseables,
+            scoped_formulas,
             format,
         ),
+        Commands::VerifyFormulas {
+            spec_path,
+            timeout,
+            skip_z3,
+            format,
+            json_out,
+        } => handle_verify_formulas(
+            resolve_spec_paths(spec_path),
+            timeout,
+            skip_z3,
+            format,
+            json_out,
+        ),
+        Commands::CheckFormulas {
+            spec_path,
+            z3_sat,
+            timeout,
+        } => handle_check_formulas(resolve_spec_paths(spec_path), z3_sat, timeout),
         Commands::ExtractConstants { spec_path, output } => {
             handle_extract_constants(resolve_spec_paths(spec_path), output)
         }
@@ -324,10 +441,67 @@ fn main() {
     std::process::exit(exit_code);
 }
 
+fn handle_list_formulas(spec_paths: Vec<PathBuf>) -> i32 {
+    if spec_paths.is_empty() {
+        eprintln!("Error: --spec-path or SPEC_LOCK_SPEC_PATH required for list-formulas");
+        return 1;
+    }
+    match parser::orange_paper::SpecParser::from_paths(&spec_paths) {
+        Ok(parser) => {
+            warn_formula_dep_diagnostics(&parser, "list-formulas");
+
+            if parser.formulas().is_empty() {
+                println!("(no F_* Formula blocks in merged spec)");
+            } else {
+                let ids: std::collections::HashSet<&str> =
+                    parser.formulas().keys().map(|s| s.as_str()).collect();
+                let c_stable = parser.merged_consensus_constant_ids();
+                let mut formulas: Vec<_> = parser.formulas().values().collect();
+                formulas.sort_by(|a, b| a.id.cmp(&b.id));
+                for f in formulas {
+                    let condensed: String =
+                        f.latex_body.split_whitespace().collect::<Vec<_>>().join(" ");
+                    let deps = f.depends_on.join(",");
+                    let gate = if crate::cli::drift::formula_latex_parseable_for_verify(&f.latex_body)
+                    {
+                        "ok"
+                    } else {
+                        "fail"
+                    };
+                    let missing_f_refs: String = f
+                        .depends_on
+                        .iter()
+                        .filter(|d| d.starts_with("F_") && !ids.contains(d.as_str()))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let missing_c_refs: String = f
+                        .depends_on
+                        .iter()
+                        .filter(|d| d.starts_with("C_") && !c_stable.contains(d.as_str()))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    println!(
+                        "{}\t{}\t{gate}\t{deps}\t{missing_f_refs}\t{missing_c_refs}\t{condensed}",
+                        f.id, f.section,
+                    );
+                }
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
 fn handle_check_drift(
     spec_paths: Vec<PathBuf>,
     crate_path: PathBuf,
     scoped_unparseables: bool,
+    scoped_formulas: bool,
     format: OutputFormat,
 ) -> i32 {
     if spec_paths.is_empty() {
@@ -335,8 +509,16 @@ fn handle_check_drift(
         return 1;
     }
 
-    let result = match cli::drift::detect_drift(&crate_path, Some(&spec_paths), scoped_unparseables)
-    {
+    if let Ok(sp) = parser::orange_paper::SpecParser::from_paths(&spec_paths) {
+        warn_formula_dep_diagnostics(&sp, "check-drift");
+    }
+
+    let result = match cli::drift::detect_drift(
+        &crate_path,
+        Some(&spec_paths),
+        scoped_unparseables,
+        scoped_formulas,
+    ) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error detecting drift: {e}");
@@ -364,6 +546,7 @@ fn handle_check_drift(
         || !result.missing_from_spec.is_empty()
         || !result.missing_implementations.is_empty()
         || !result.unparseable_spec_contracts.is_empty()
+        || !result.unparseable_formulas.is_empty()
     {
         1
     } else {
@@ -371,7 +554,12 @@ fn handle_check_drift(
     }
 }
 
-fn handle_coverage(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: OutputFormat) -> i32 {
+fn handle_coverage(
+    crate_path: PathBuf,
+    spec_paths: Vec<PathBuf>,
+    rollup_from_verify_json: Option<PathBuf>,
+    format: OutputFormat,
+) -> i32 {
     let stats = match cli::coverage::generate_coverage(
         &crate_path,
         if spec_paths.is_empty() {
@@ -379,6 +567,7 @@ fn handle_coverage(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: Output
         } else {
             Some(spec_paths.as_slice())
         },
+        rollup_from_verify_json.as_deref(),
     ) {
         Ok(s) => s,
         Err(e) => {
@@ -386,6 +575,12 @@ fn handle_coverage(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: Output
             return 1;
         }
     };
+
+    if !spec_paths.is_empty() {
+        if let Ok(sp) = parser::orange_paper::SpecParser::from_paths(&spec_paths) {
+            warn_formula_dep_diagnostics(&sp, "coverage");
+        }
+    }
 
     let output = if !spec_paths.is_empty() {
         match cli::coverage::generate_spec_coverage_report(&crate_path, &spec_paths, &stats) {
@@ -487,6 +682,12 @@ fn handle_summary(crate_path: PathBuf, spec_paths: Vec<PathBuf>, format: String)
         }
     }
 
+    if !spec_paths.is_empty() {
+        if let Ok(sp) = parser::orange_paper::SpecParser::from_paths(&spec_paths) {
+            warn_formula_dep_diagnostics(&sp, "summary");
+        }
+    }
+
     if format == "badge" {
         let n = functions.len();
         let color = if n > 0 { "brightgreen" } else { "lightgrey" };
@@ -536,6 +737,7 @@ fn handle_verify(args: VerifyArgs) -> i32 {
         strict: strict_cli,
         spec_paths,
         timeout_secs,
+        json_out,
     } = args;
     // CI / scripts can force strict mode when using older cargo-spec-lock without `--strict` on the CLI.
     let strict = strict_cli
@@ -600,6 +802,96 @@ fn handle_verify(args: VerifyArgs) -> i32 {
             .then_with(|| a.function_name.cmp(&b.function_name))
     });
 
+    // Merged **`F_*`** registry gate (same as **`check-formulas`** + **`verify-formulas`** SAT smoke): runs
+    // before Rust function verification and fails fast on blocking static/Z3 outcomes.
+    use crate::cli::formula_checks::{
+        analyze_formula_registry, registry_has_blocking_static_failure,
+        registry_has_blocking_z3_outcome, FormulaAnalyzeConfig, FormulaRegistryAnalysis,
+    };
+    use crate::cli::output::{
+        format_formula_verify_human, format_verify_json_report, FormulaVerifyJsonFlags,
+    };
+
+    let mut formula_registry_for_json: Option<(FormulaRegistryAnalysis, FormulaVerifyJsonFlags)> = None;
+
+    if !spec_paths.is_empty() {
+        if let Ok(parser) = parser::orange_paper::SpecParser::from_paths(&spec_paths) {
+            warn_formula_dep_diagnostics(&parser, "verify");
+
+            let skip_z3 = matches!(
+                std::env::var("SPEC_LOCK_VERIFY_FORMULAS_SKIP_Z3").as_deref(),
+                Ok("1") | Ok("true") | Ok("yes")
+            );
+            let z3_requested = !skip_z3;
+            let want_z3 = z3_requested && cfg!(feature = "z3");
+            let analysis = analyze_formula_registry(
+                &parser,
+                FormulaAnalyzeConfig {
+                    request_z3_sat: want_z3,
+                    timeout_ms: timeout_secs.saturating_mul(1000).max(1),
+                },
+            );
+            let formulas_len = parser.formulas().len();
+            let flags = FormulaVerifyJsonFlags {
+                z3_sat_requested: z3_requested,
+                cargo_built_with_z3: cfg!(feature = "z3"),
+            };
+
+            let fail_static = registry_has_blocking_static_failure(&analysis);
+            let fail_z3 = want_z3 && registry_has_blocking_z3_outcome(&analysis);
+            let cannot_run_requested_z3 =
+                z3_requested && !cfg!(feature = "z3") && formulas_len > 0 && !fail_static;
+
+            if cannot_run_requested_z3 {
+                eprintln!(
+                    "verify: Z3 SAT smoke for the merged **`F_*`** registry was requested — rebuild **`cargo-spec-lock`** with **`--features z3`** (or set **`SPEC_LOCK_VERIFY_FORMULAS_SKIP_Z3=1`** for static-only)."
+                );
+            }
+
+            let formula_blocking = fail_static || fail_z3 || cannot_run_requested_z3;
+
+            if formula_blocking {
+                match format {
+                    OutputFormat::Human | OutputFormat::Junit | OutputFormat::Markdown => {
+                        println!("{}", format_formula_verify_human(&analysis, z3_requested));
+                    }
+                    OutputFormat::Json => {
+                        println!(
+                            "{}",
+                            format_verify_json_report(&[], Some((&analysis, flags)))
+                        );
+                    }
+                }
+                if let Some(ref path) = json_out {
+                    let json = format_verify_json_report(&[], Some((&analysis, flags)));
+                    if let Some(parent) = path.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            if let Err(e) = std::fs::create_dir_all(parent) {
+                                eprintln!(
+                                    "Error creating parent directories for --json-out {}: {}",
+                                    path.display(),
+                                    e
+                                );
+                                return 1;
+                            }
+                        }
+                    }
+                    if let Err(e) = std::fs::write(path, json.as_bytes()) {
+                        eprintln!("Error writing --json-out {}: {}", path.display(), e);
+                        return 1;
+                    }
+                }
+                return 1;
+            }
+
+            formula_registry_for_json = Some((analysis, flags));
+        } else {
+            eprintln!(
+                "Warning: could not parse merged spec for **`F_*`** registry — skipping formula-only gate (Rust **`verify`** rows still run)"
+            );
+        }
+    }
+
     // Verify functions (deterministic iteration order)
     let mut results = Vec::new();
     for func in &sorted {
@@ -615,8 +907,41 @@ fn handle_verify(args: VerifyArgs) -> i32 {
         OutputFormat::Markdown => "markdown",
     };
 
-    let output = cli::output::format_results(&results, format_str);
-    print!("{output}");
+    let printed = match format {
+        OutputFormat::Json => cli::output::format_verify_json_report(
+            &results,
+            formula_registry_for_json
+                .as_ref()
+                .map(|(a, f)| (a, *f)),
+        ),
+        _ => cli::output::format_results(&results, format_str),
+    };
+    print!("{printed}");
+
+    if let Some(ref path) = json_out {
+        let json = cli::output::format_verify_json_report(
+            &results,
+            formula_registry_for_json
+                .as_ref()
+                .map(|(a, f)| (a, *f)),
+        );
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!(
+                        "Error creating parent directories for --json-out {}: {}",
+                        path.display(),
+                        e
+                    );
+                    return 1;
+                }
+            }
+        }
+        if let Err(e) = std::fs::write(path, json.as_bytes()) {
+            eprintln!("Error writing --json-out {}: {}", path.display(), e);
+            return 1;
+        }
+    }
 
     // Return exit code: 0 if all passed, 1 if any failed or no-contracts (or partial when --strict)
     let has_failures = results
@@ -632,6 +957,218 @@ fn handle_verify(args: VerifyArgs) -> i32 {
     if has_failures || has_no_contracts || (strict && has_partial) {
         1
     } else {
+        0
+    }
+}
+
+fn handle_verify_formulas(
+    spec_paths: Vec<PathBuf>,
+    timeout_secs: u64,
+    skip_z3: bool,
+    format: OutputFormat,
+    json_out: Option<PathBuf>,
+) -> i32 {
+    use crate::cli::formula_checks::{
+        analyze_formula_registry, registry_has_blocking_static_failure,
+        registry_has_blocking_z3_outcome, FormulaAnalyzeConfig,
+    };
+    use crate::cli::output::{format_formula_verify_human, format_formula_verify_json_report, FormulaVerifyJsonFlags};
+    use crate::parser::orange_paper::SpecParser;
+
+    if spec_paths.is_empty() {
+        eprintln!("Error: --spec-path or SPEC_LOCK_SPEC_PATH required for verify-formulas");
+        return 1;
+    }
+
+    let parser = match SpecParser::from_paths(&spec_paths) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error parsing merged spec: {e}");
+            return 1;
+        }
+    };
+
+    warn_formula_dep_diagnostics(&parser, "verify-formulas");
+
+    let formulas_len = parser.formulas().len();
+    let z3_requested = !skip_z3;
+    let want_z3 = z3_requested && cfg!(feature = "z3");
+    let analysis = analyze_formula_registry(
+        &parser,
+        FormulaAnalyzeConfig {
+            request_z3_sat: want_z3,
+            timeout_ms: timeout_secs.saturating_mul(1000).max(1),
+        },
+    );
+
+    let flags = FormulaVerifyJsonFlags {
+        z3_sat_requested: z3_requested,
+        cargo_built_with_z3: cfg!(feature = "z3"),
+    };
+    let json_doc = format_formula_verify_json_report(&analysis, flags);
+
+    let format_str = match format {
+        OutputFormat::Human => "human",
+        OutputFormat::Json => "json",
+        OutputFormat::Junit | OutputFormat::Markdown => {
+            eprintln!(
+                "verify-formulas: `{}` unsupported for this subcommand — using human stdout",
+                match format {
+                    OutputFormat::Junit => "junit",
+                    OutputFormat::Markdown => "markdown",
+                    _ => unreachable!(),
+                }
+            );
+            "human"
+        }
+    };
+
+    match format_str {
+        "json" => println!("{json_doc}"),
+        _ => print!("{}", format_formula_verify_human(&analysis, z3_requested)),
+    }
+
+    if let Some(ref path) = json_out {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!(
+                        "Error creating parent directories for verify-formulas --json-out {}: {}",
+                        path.display(),
+                        e
+                    );
+                    return 1;
+                }
+            }
+        }
+        if let Err(e) = std::fs::write(path, json_doc.as_bytes()) {
+            eprintln!("Error writing verify-formulas --json-out {}: {}", path.display(), e);
+            return 1;
+        }
+    }
+
+    let fail_static = registry_has_blocking_static_failure(&analysis);
+    let fail_z3 = want_z3 && registry_has_blocking_z3_outcome(&analysis);
+    let cannot_run_requested_z3 = z3_requested
+        && !cfg!(feature = "z3")
+        && formulas_len > 0
+        && !fail_static;
+    if cannot_run_requested_z3 {
+        eprintln!(
+            "verify-formulas: Z3 SAT smoke was requested — rebuild **`cargo-spec-lock`** with **`--features z3`** (or pass **`--skip-z3`** for static-only)."
+        );
+    }
+    if fail_static || fail_z3 || cannot_run_requested_z3 {
+        1
+    } else {
+        0
+    }
+}
+
+fn handle_check_formulas(spec_paths: Vec<PathBuf>, z3_sat: bool, timeout_secs: u64) -> i32 {
+    use crate::cli::formula_checks::{
+        analyze_formula_registry, registry_has_blocking_static_failure,
+        registry_has_blocking_z3_outcome, FormulaAnalyzeConfig,
+        FormulaStaticOutcome, Z3FormulaPhase,
+    };
+    use crate::parser::orange_paper::SpecParser;
+
+    if spec_paths.is_empty() {
+        eprintln!("Error: --spec-path or SPEC_LOCK_SPEC_PATH required for check-formulas");
+        return 1;
+    }
+
+    let parser = match SpecParser::from_paths(&spec_paths) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error parsing merged spec: {e}");
+            return 1;
+        }
+    };
+
+    warn_formula_dep_diagnostics(&parser, "check-formulas");
+
+    let analysis = analyze_formula_registry(
+        &parser,
+        FormulaAnalyzeConfig {
+            request_z3_sat: z3_sat && cfg!(feature = "z3"),
+            timeout_ms: timeout_secs.saturating_mul(1000).max(1),
+        },
+    );
+
+    let formulas_len = parser.formulas().len();
+
+    if registry_has_blocking_static_failure(&analysis) {
+        let bad: Vec<String> = analysis
+            .rows
+            .iter()
+            .filter_map(|r| match &r.static_gate {
+                FormulaStaticOutcome::Failed { message } => {
+                    Some(format!("{}: {message}", r.formula_id))
+                }
+                _ => None,
+            })
+            .collect();
+        eprintln!(
+            "check-formulas: {} failure(s) (static gate) among {} **`F_*`** formula(s):\n{}",
+            bad.len(),
+            formulas_len,
+            bad.join("\n")
+        );
+        return 1;
+    }
+
+    if !z3_sat {
+        println!(
+            "check-formulas: {formulas_len} **`F_*`** body(ies) OK (static enrich/verify gate)."
+        );
+        return 0;
+    }
+
+    #[cfg(not(feature = "z3"))]
+    {
+        eprintln!(
+            "check-formulas: **`--z3-sat`** requires building **`cargo-spec-lock`** with **`--features z3`**."
+        );
+        return 1;
+    }
+
+    #[cfg(feature = "z3")]
+    {
+        if registry_has_blocking_z3_outcome(&analysis) {
+            let mut z3_bad = Vec::new();
+            for r in &analysis.rows {
+                match &r.z3_phase {
+                    Z3FormulaPhase::SatSmokeOk => {}
+                    Z3FormulaPhase::NotRequested | Z3FormulaPhase::SkippedDueToStatic => {}
+                    Z3FormulaPhase::SkippedNoZ3Feature => z3_bad.push(format!(
+                        "{}: Z3 SAT smoke requested — rebuild **`cargo-spec-lock`** with **`--features z3`**",
+                        r.formula_id
+                    )),
+                    Z3FormulaPhase::UnsatContradiction => z3_bad.push(format!(
+                        "{}: Z3 reports UNSAT (formula is a contradiction under current translation)",
+                        r.formula_id
+                    )),
+                    Z3FormulaPhase::Unknown { reason } => {
+                        z3_bad.push(format!("{}: Z3 unknown — {reason}", r.formula_id));
+                    }
+                    Z3FormulaPhase::Error { message } => {
+                        z3_bad.push(format!("{}: {message}", r.formula_id));
+                    }
+                }
+            }
+            eprintln!(
+                "check-formulas: {} Z3 satisfiability issue(s) among {} formula(s) (static gate passed):\n{}",
+                z3_bad.len(),
+                formulas_len,
+                z3_bad.join("\n")
+            );
+            return 1;
+        }
+
+        println!(
+            "check-formulas: {formulas_len} **`F_*`** static OK; **`--z3-sat`**: all {formulas_len} satisfiability smoke checks passed."
+        );
         0
     }
 }
@@ -660,6 +1197,7 @@ fn handle_extract_constants(spec_paths: Vec<PathBuf>, output_path: Option<PathBu
             return 1;
         }
     };
+    warn_formula_dep_diagnostics(&parser, "extract-constants");
 
     // Extract constants
     let constants = parser.extract_constants();
@@ -760,6 +1298,7 @@ fn handle_extract_formulas(spec_paths: Vec<PathBuf>, output_path: Option<PathBuf
             return 1;
         }
     };
+    warn_formula_dep_diagnostics(&parser, "extract-formulas");
 
     // Extract functions with formulas
     let functions = parser.extract_functions_with_formulas();
@@ -904,6 +1443,8 @@ fn generate_property_helpers(functions: &[&parser::orange_paper::FunctionSpec]) 
     code
 }
 
+/// **Experimental / heuristic:** emits Rust snippets for **`extract-property-tests`** helpers only.
+/// Not invoked by **`verify`** / **`spec_enrich`**; does **not** establish solver-backed assurance.
 fn translate_formula_to_rust(formula: &str, func_name: &str) -> String {
     // Handle specific formulas with known patterns
     let func_lower = func_name.to_lowercase();
@@ -1014,6 +1555,7 @@ fn handle_extract_property_tests(
             return 1;
         }
     };
+    warn_formula_dep_diagnostics(&parser, "extract-property-tests");
 
     let props = parser.get_all_standalone_properties();
     let round_trips: Vec<_> = props
