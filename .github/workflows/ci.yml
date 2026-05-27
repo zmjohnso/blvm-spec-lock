@@ -221,8 +221,11 @@ jobs:
       - name: Dry-run publish
         if: steps.gate.outputs.do_release == 'true'
         run: |
+          # Workspace split: blvm-spec-lock depends on blvm-spec-lock-core from crates.io.
+          # Main-crate `cargo publish --dry-run` fails until core is on the index, so dry-run
+          # only core here; main manifest is checked in Package metadata (--list) and after
+          # core is published for real in the Publish step below.
           cargo publish -p blvm-spec-lock-core --dry-run --allow-dirty
-          cargo publish -p blvm-spec-lock --dry-run --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
