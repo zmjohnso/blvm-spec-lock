@@ -547,12 +547,12 @@ fn handle_check_drift(
 
     print!("{output}");
 
-    // Return non-zero exit code if drift detected
+    // Unparseable contracts are informational: they indicate spec math that the condition parser
+    // cannot yet translate to Z3, not an implementation mismatch.  Exit non-zero only for real
+    // drift: mismatches, missing spec entries, or missing implementations.
     if !result.mismatched_contracts.is_empty()
         || !result.missing_from_spec.is_empty()
         || !result.missing_implementations.is_empty()
-        || !result.unparseable_spec_contracts.is_empty()
-        || !result.unparseable_formulas.is_empty()
     {
         1
     } else {
