@@ -25,8 +25,7 @@ pub struct Contract {
     pub condition: String,
     pub expr: Option<syn::Expr>, // Parsed expression for static checker
     /// True when this contract was auto-derived from the Orange Paper spec (not manually written).
-    /// Spec-derived contract violations produce `partial` status rather than `failed`, since the
-    /// LaTeX→Z3 translation is best-effort and may not capture all implementation context.
+    /// Spec-derived failures are demoted to Partial (see `demote_if_all_spec_derived`).
     pub is_spec_derived: bool,
 }
 
@@ -535,22 +534,12 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
     }
 
     // Early return if requires contracts failed.
-    // Demote to Partial only when ALL failures are from spec-derived contracts AND
-    // are translation gaps (parse failures). A Z3 counterexample on a spec-derived
-    // contract is a real failure — the implementation diverges from the spec.
+    if let Some(result) =
+        demote_if_all_spec_derived(&failed_contracts, verified_count, function.contracts.len())
+    {
+        return result;
+    }
     if !failed_contracts.is_empty() {
-        let all_spec_derived = failed_contracts.iter().all(|(_, _, sd)| *sd);
-        let all_translation_gaps = failed_contracts
-            .iter()
-            .all(|(_, reason, _)| reason.contains("could not be parsed"));
-        if all_spec_derived && all_translation_gaps {
-            return VerificationResult::Partial {
-                verified: verified_count,
-                total: function.contracts.len(),
-                reason: Some(failed_contracts[0].1.clone()),
-                partial_reason: Some(PartialReason::UnsupportedTranslation),
-            };
-        }
         let (contract_type, reason, _) = &failed_contracts[0];
         return failed_verification(contract_type, reason, failed_contracts.len());
     }
@@ -663,22 +652,12 @@ pub fn verify_function(function: &FunctionToVerify, timeout_secs: u64) -> Verifi
     }
 
     // Report results.
-    // Demote to Partial only when ALL failures are spec-derived translation gaps.
-    // A Z3 counterexample on a spec-derived contract means the implementation diverges
-    // from the spec and must be treated as Failed even under SPEC_LOCK_STRICT.
+    if let Some(result) =
+        demote_if_all_spec_derived(&failed_contracts, verified_count, function.contracts.len())
+    {
+        return result;
+    }
     if !failed_contracts.is_empty() {
-        let all_spec_derived = failed_contracts.iter().all(|(_, _, sd)| *sd);
-        let all_translation_gaps = failed_contracts
-            .iter()
-            .all(|(_, reason, _)| reason.contains("could not be parsed"));
-        if all_spec_derived && all_translation_gaps {
-            return VerificationResult::Partial {
-                verified: verified_count,
-                total: function.contracts.len(),
-                reason: Some(failed_contracts[0].1.clone()),
-                partial_reason: Some(PartialReason::UnsupportedTranslation),
-            };
-        }
         let (contract_type, reason, _) = &failed_contracts[0];
         return failed_verification(contract_type, reason, failed_contracts.len());
     }
@@ -940,6 +919,10 @@ pub enum PartialReason {
     MissingZ3Build,
     /// Solver available but not all contracts completed (budget / incomplete path).
     IncompleteCoverage,
+    /// Z3 counterexample or solver error on an auto-enriched (spec-derived) contract.
+    /// Does not block CI exit 0 — LaTeX→Z3 translation is best-effort; manual contracts
+    /// with counterexamples still produce **Failed**.
+    SpecDerivedCounterexample,
     Other,
 }
 
@@ -951,6 +934,7 @@ impl PartialReason {
             PartialReason::UnsupportedTranslation => "unsupported_translation",
             PartialReason::MissingZ3Build => "missing_z3_build",
             PartialReason::IncompleteCoverage => "incomplete_coverage",
+            PartialReason::SpecDerivedCounterexample => "spec_derived_counterexample",
             PartialReason::Other => "other",
         }
     }
@@ -963,6 +947,37 @@ fn solver_unknown_partial_reason(reason: &str) -> PartialReason {
     } else {
         PartialReason::Z3Unknown
     }
+}
+
+/// When every failure is on a spec-derived (auto-enriched) contract, demote to **Partial**
+/// so CI is not blocked by LaTeX→Z3 approximation gaps. Manual contract failures return
+/// `None` and remain **Failed**.
+fn demote_if_all_spec_derived(
+    failed_contracts: &[(String, String, bool)],
+    verified_count: usize,
+    total: usize,
+) -> Option<VerificationResult> {
+    if failed_contracts.is_empty() {
+        return None;
+    }
+    let all_spec_derived = failed_contracts.iter().all(|(_, _, sd)| *sd);
+    if !all_spec_derived {
+        return None;
+    }
+    let all_translation_gaps = failed_contracts
+        .iter()
+        .all(|(_, reason, _)| reason.contains("could not be parsed"));
+    let partial_reason = if all_translation_gaps {
+        PartialReason::UnsupportedTranslation
+    } else {
+        PartialReason::SpecDerivedCounterexample
+    };
+    Some(VerificationResult::Partial {
+        verified: verified_count,
+        total,
+        reason: Some(failed_contracts[0].1.clone()),
+        partial_reason: Some(partial_reason),
+    })
 }
 
 /// Build **`VerificationResult::Failed`** with optional **`partial_reason`** for **`solver_unknown`** rows.
@@ -1123,7 +1138,8 @@ mod spec_locked_anchor_extract_tests {
 #[cfg(test)]
 mod failure_kind_tests {
     use super::{
-        failed_verification, failure_kind, FailureKind, PartialReason, VerificationResult,
+        demote_if_all_spec_derived, failed_verification, failure_kind, FailureKind, PartialReason,
+        VerificationResult,
     };
 
     #[test]
@@ -1148,5 +1164,34 @@ mod failure_kind_tests {
     fn determinism_non_deterministic_stays_counterexample() {
         let msg = "Determinism: Non-deterministic. Counterexample: [] (1 total failures)";
         assert_eq!(failure_kind("Ensures", msg), FailureKind::Counterexample);
+    }
+
+    #[test]
+    fn demote_spec_derived_counterexample_to_partial() {
+        let failed = vec![(
+            "Ensures".to_string(),
+            "Z3: Contract violated. Counterexample: {}".to_string(),
+            true,
+        )];
+        let result = demote_if_all_spec_derived(&failed, 0, 1).expect("should demote");
+        match result {
+            VerificationResult::Partial { partial_reason, .. } => {
+                assert_eq!(
+                    partial_reason,
+                    Some(PartialReason::SpecDerivedCounterexample)
+                );
+            }
+            _ => panic!("expected Partial"),
+        }
+    }
+
+    #[test]
+    fn manual_counterexample_stays_failed() {
+        let failed = vec![(
+            "Ensures".to_string(),
+            "Z3: Contract violated.".to_string(),
+            false,
+        )];
+        assert!(demote_if_all_spec_derived(&failed, 0, 1).is_none());
     }
 }

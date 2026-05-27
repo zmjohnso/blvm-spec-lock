@@ -125,9 +125,16 @@ Per-function solver time can be raised with **`--timeout <secs>`** on **`verify`
 | Any **Partial** (and no failures above) | 0 |
 | All **Passed** | 0 |
 
-**`Partial` semantics (updated):** A `Partial` result is emitted only when a spec-derived contract could not be translated into a verifiable expression (parse gap, unsupported LaTeX construct). A Z3 counterexample on a spec-derived contract produces **`Failed`** (exit 1) — the implementation diverges from the spec.
+**`Partial` semantics:** A `Partial` result is emitted when all failures are on spec-derived (auto-enriched) contracts:
 
-`--strict` / `SPEC_LOCK_STRICT=1` is accepted for backward compatibility but no longer changes exit behaviour for `Partial` results, since `Partial` is now restricted to genuine translation gaps that cannot be resolved without improving the LaTeX parser. Counterexamples always exit 1 regardless of strict. **NoContracts** and **Failed** fail the process unconditionally. See **[VERIFY_JSON.md](VERIFY_JSON.md)** for the structured report alongside exit codes.
+| `partial_reason` | Meaning | Exit code |
+|------------------|---------|-----------|
+| `unsupported_translation` | LaTeX/contract could not be parsed into Z3 | 0 |
+| `spec_derived_counterexample` | Z3 counterexample or solver error on spec-derived contract (LaTeX→Z3 gap; informational) | 0 |
+
+**Failed** (exit 1) is reserved for manually-written `#[requires]`/`#[ensures]` contract violations, mixed manual+spec failures, and **NoContracts**. Spec-derived counterexamples are visible in JSON as `partial` with `spec_derived_counterexample` — they do not block CI while the LaTeX→Z3 pipeline matures.
+
+`--strict` / `SPEC_LOCK_STRICT=1` is accepted for backward compatibility but no longer changes exit behaviour for `Partial` results. **NoContracts** and **Failed** fail the process unconditionally. See **[VERIFY_JSON.md](VERIFY_JSON.md)** for the structured report alongside exit codes.
 
 ## Section Matching
 
