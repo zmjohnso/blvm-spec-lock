@@ -968,12 +968,20 @@ fn demote_if_all_spec_derived(
     if !all_spec_derived {
         return None;
     }
-    // Only demote when every failure is a parse/translation gap.  A Z3 counterexample
-    // means Z3 successfully evaluated the contract and found a violation — that is a
-    // real finding even on an auto-enriched contract.
+    // Only demote when every failure is a translation gap:
+    //  1. Parse gaps: the spec condition could not be parsed as a Rust expression.
+    //  2. Body-translation gaps: the function body could not be translated to Z3
+    //     constraints, making any SAT result vacuous (not a real counterexample).
+    //
+    // A Z3 counterexample WITH concrete variable assignments on a spec-derived contract
+    // means Z3 fully modelled the implementation and found a real violation — that must
+    // remain Failed.
     let all_translation_gaps = failed_contracts
         .iter()
-        .all(|(_, reason, _)| reason.contains("could not be parsed"));
+        .all(|(_, reason, _)| {
+            reason.contains("could not be parsed")
+                || reason.contains("Could not translate function body")
+        });
     if !all_translation_gaps {
         return None;
     }
@@ -1213,5 +1221,45 @@ mod failure_kind_tests {
             false,
         )];
         assert!(demote_if_all_spec_derived(&failed, 0, 1).is_none());
+    }
+
+    #[test]
+    fn spec_derived_body_translation_failure_demotes_to_partial() {
+        // When the function body cannot be translated to Z3 constraints, the SAT result
+        // is vacuous (no body = no real counterexample).  The z3_verifier returns Unknown
+        // with "Could not translate function body", which verify_with_z3 propagates as
+        // "Z3: Z3 verification unknown: Could not translate function body ...".
+        // demote_if_all_spec_derived should treat this as a translation gap → Partial.
+        let failed = vec![(
+            "Ensures".to_string(),
+            "Z3: Z3 verification unknown: Could not translate function body to Z3 constraints; \
+             SAT result without body constraints is not meaningful"
+                .to_string(),
+            true,
+        )];
+        let result = demote_if_all_spec_derived(&failed, 0, 1)
+            .expect("body-translation gap should demote to Partial");
+        match result {
+            VerificationResult::Partial { partial_reason, .. } => {
+                assert_eq!(partial_reason, Some(PartialReason::UnsupportedTranslation));
+            }
+            _ => panic!("expected Partial, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn spec_derived_counterexample_with_concrete_assignments_stays_failed() {
+        // A spec-derived failure with a non-empty counterexample message (concrete assignments)
+        // must remain Failed — that is a real verification finding.
+        let failed = vec![(
+            "Ensures".to_string(),
+            "Z3: Contract violated. Counterexample: {\"x\": \"5\", \"y\": \"-1\"} (1 total failures)"
+                .to_string(),
+            true,
+        )];
+        assert!(
+            demote_if_all_spec_derived(&failed, 0, 1).is_none(),
+            "spec-derived failure with concrete counterexample must not be demoted"
+        );
     }
 }

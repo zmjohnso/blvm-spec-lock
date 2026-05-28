@@ -130,6 +130,10 @@ impl Z3Verifier {
         // This makes Orange Paper the single source of truth:
         // - Math (ensures contracts) comes from Orange Paper
         // - Implementation must satisfy the math
+        // Track whether we successfully translated the function body into solver constraints.
+        // A SAT result without body constraints is vacuous (not a real counterexample).
+        let mut body_translated = false;
+
         if matches!(contract.contract_type, ContractType::Ensures) {
             // Add requires constraints
             for requires_contract in requires_contracts {
@@ -178,8 +182,10 @@ impl Z3Verifier {
                     .translate_function_body(func, &mut body_vars)
                 {
                     solver.assert(&impl_formula);
+                    body_translated = true;
                 }
-                // If translation fails, we still verify based on type constraints and requires
+                // If translation fails, we still verify based on type constraints and requires.
+                // body_translated remains false; SAT in that case is vacuous (see below).
             }
         }
 
@@ -196,7 +202,21 @@ impl Z3Verifier {
                 VerificationResult::Verified
             }
             SatResult::Sat => {
-                // Negation is satisfiable, so property fails
+                // Negation is satisfiable.
+                //
+                // If the function body was NOT translated into solver constraints, the SAT
+                // result is vacuous — Z3 only knows "!ensures can be satisfied" which is
+                // trivially true for almost any non-constant postcondition.  This is a
+                // translator limitation, not a real counterexample against the implementation.
+                // Return Unknown so callers can classify it as a translation gap (Partial)
+                // rather than a hard failure.
+                if !body_translated {
+                    return VerificationResult::Unknown {
+                        reason: "Could not translate function body to Z3 constraints; \
+                                 SAT result without body constraints is not meaningful"
+                            .to_string(),
+                    };
+                }
                 let counterexample = self.extract_counterexample(&solver);
                 VerificationResult::Failed { counterexample }
             }
