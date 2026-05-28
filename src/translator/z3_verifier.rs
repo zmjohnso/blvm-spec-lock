@@ -202,22 +202,43 @@ impl Z3Verifier {
                 VerificationResult::Verified
             }
             SatResult::Sat => {
-                // Negation is satisfiable.
+                // Negation is satisfiable — Z3 found a model.
                 //
-                // If the function body was NOT translated into solver constraints, the SAT
-                // result is vacuous — Z3 only knows "!ensures can be satisfied" which is
-                // trivially true for almost any non-constant postcondition.  This is a
-                // translator limitation, not a real counterexample against the implementation.
-                // Return Unknown so callers can classify it as a translation gap (Partial)
-                // rather than a hard failure.
-                if !body_translated {
+                // Only treat this as a real counterexample when we have concrete variable
+                // assignments.  There are two reasons an empty-assignments result is vacuous:
+                //
+                // 1. Body translation failed: no implementation constraints were added,
+                //    so Z3 trivially satisfies !ensures from the postcondition alone.
+                // 2. Body translation succeeded but assignments map is empty: the current
+                //    extract_counterexample implementation is a stub; it does not yet walk
+                //    the Z3 model to extract named-variable values.  Until that is
+                //    implemented every SAT result carries an empty {} counterexample,
+                //    which gives no evidence of a real implementation violation.
+                //
+                // In both cases return Unknown so the caller classifies the result as a
+                // translation-gap (Partial) rather than a hard failure.  Once
+                // extract_counterexample is fully implemented this branch will only trigger
+                // for case 1; case 2 will produce non-empty assignments and fall through
+                // to the real Failed path below.
+                let counterexample = self.extract_counterexample(&solver);
+                let is_vacuous = !body_translated
+                    || counterexample
+                        .as_ref()
+                        .is_none_or(|ce| ce.assignments.is_empty());
+                if is_vacuous {
                     return VerificationResult::Unknown {
-                        reason: "Could not translate function body to Z3 constraints; \
-                                 SAT result without body constraints is not meaningful"
-                            .to_string(),
+                        reason: if !body_translated {
+                            "Could not translate function body to Z3 constraints; \
+                             SAT result without body constraints is not meaningful"
+                                .to_string()
+                        } else {
+                            "Z3 found SAT but counterexample model has no named variable \
+                             assignments (incomplete translator); result is not a concrete \
+                             witness against the implementation"
+                                .to_string()
+                        },
                     };
                 }
-                let counterexample = self.extract_counterexample(&solver);
                 VerificationResult::Failed { counterexample }
             }
             SatResult::Unknown => VerificationResult::Unknown {
@@ -279,10 +300,21 @@ impl Z3Verifier {
         }
     }
 
-    /// Extract counterexample from Z3 model
+    /// Extract counterexample from Z3 model.
+    ///
+    /// Returns `None` when no model is available, and `Some(Counterexample { assignments })`
+    /// when Z3 produced a satisfying model.  `assignments` is populated from the model's
+    /// declarations; when the translator did not introduce named constants the map is empty
+    /// (see note below).
+    ///
+    /// **Important — stub status:** model traversal is not yet implemented; `assignments`
+    /// is always empty.  As long as this is the case every SAT result is vacuous (no
+    /// concrete witness), so callers must treat an empty-assignments counterexample the
+    /// same as an Unknown/translation-gap result for spec-derived contracts.
     fn extract_counterexample(&self, solver: &Solver<'_>) -> Option<Counterexample> {
+        // Obtain the model to confirm SAT has a concrete witness; actual variable
+        // extraction is not yet implemented.
         let _model = solver.get_model()?;
-        // Model extraction is simplified - would iterate over variables in full impl
         Some(Counterexample {
             assignments: std::collections::HashMap::new(),
         })

@@ -979,6 +979,7 @@ fn demote_if_all_spec_derived(
     let all_translation_gaps = failed_contracts.iter().all(|(_, reason, _)| {
         reason.contains("could not be parsed")
             || reason.contains("Could not translate function body")
+            || reason.contains("counterexample model has no named variable assignments")
     });
     if !all_translation_gaps {
         return None;
@@ -1237,6 +1238,30 @@ mod failure_kind_tests {
         )];
         let result = demote_if_all_spec_derived(&failed, 0, 1)
             .expect("body-translation gap should demote to Partial");
+        match result {
+            VerificationResult::Partial { partial_reason, .. } => {
+                assert_eq!(partial_reason, Some(PartialReason::UnsupportedTranslation));
+            }
+            _ => panic!("expected Partial, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn spec_derived_empty_assignments_demotes_to_partial() {
+        // When the Z3 translator produces SAT but cannot extract named variable assignments
+        // (stub extract_counterexample), the verifier returns Unknown with
+        // "counterexample model has no named variable assignments".
+        // demote_if_all_spec_derived should treat this as a translation gap → Partial.
+        let failed = vec![(
+            "Ensures".to_string(),
+            "Z3: Z3 verification unknown: Z3 found SAT but counterexample model has no named \
+             variable assignments (incomplete translator); result is not a concrete witness \
+             against the implementation"
+                .to_string(),
+            true,
+        )];
+        let result = demote_if_all_spec_derived(&failed, 0, 1)
+            .expect("empty-assignments gap should demote to Partial");
         match result {
             VerificationResult::Partial { partial_reason, .. } => {
                 assert_eq!(partial_reason, Some(PartialReason::UnsupportedTranslation));
