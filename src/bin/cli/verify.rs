@@ -976,12 +976,10 @@ fn demote_if_all_spec_derived(
     // A Z3 counterexample WITH concrete variable assignments on a spec-derived contract
     // means Z3 fully modelled the implementation and found a real violation — that must
     // remain Failed.
-    let all_translation_gaps = failed_contracts
-        .iter()
-        .all(|(_, reason, _)| {
-            reason.contains("could not be parsed")
-                || reason.contains("Could not translate function body")
-        });
+    let all_translation_gaps = failed_contracts.iter().all(|(_, reason, _)| {
+        reason.contains("could not be parsed")
+            || reason.contains("Could not translate function body")
+    });
     if !all_translation_gaps {
         return None;
     }
