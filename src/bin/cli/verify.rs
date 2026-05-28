@@ -980,6 +980,9 @@ fn demote_if_all_spec_derived(
         reason.contains("could not be parsed")
             || reason.contains("Could not translate function body")
             || reason.contains("counterexample model has no named variable assignments")
+            // Z3 translator type errors (e.g. "Expected Bool"): the condition was parsed but
+            // the translator cannot emit a valid Z3 expression for it — treat as a gap.
+            || reason.contains("Translation error")
     });
     if !all_translation_gaps {
         return None;
@@ -1262,6 +1265,25 @@ mod failure_kind_tests {
         )];
         let result = demote_if_all_spec_derived(&failed, 0, 1)
             .expect("empty-assignments gap should demote to Partial");
+        match result {
+            VerificationResult::Partial { partial_reason, .. } => {
+                assert_eq!(partial_reason, Some(PartialReason::UnsupportedTranslation));
+            }
+            _ => panic!("expected Partial, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn spec_derived_translation_type_error_demotes_to_partial() {
+        // "Translation error: Type error: Expected Bool" is a Z3 translator limitation —
+        // the condition parsed but cannot be expressed as a Z3 Bool.  Treat as a gap.
+        let failed = vec![(
+            "Ensures".to_string(),
+            "Z3: Z3 verification error: Translation error: Type error: Expected Bool".to_string(),
+            true,
+        )];
+        let result = demote_if_all_spec_derived(&failed, 0, 1)
+            .expect("translation type error should demote to Partial");
         match result {
             VerificationResult::Partial { partial_reason, .. } => {
                 assert_eq!(partial_reason, Some(PartialReason::UnsupportedTranslation));

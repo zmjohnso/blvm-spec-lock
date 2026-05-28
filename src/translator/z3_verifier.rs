@@ -463,9 +463,25 @@ impl Z3Verifier {
 
         match solver.check() {
             SatResult::Unsat => VerificationResult::Verified,
-            SatResult::Sat => VerificationResult::Failed {
-                counterexample: self.extract_counterexample(&solver),
-            },
+            SatResult::Sat => {
+                // Same vacuous-SAT rule as verify_contract_with_context: if the counterexample
+                // model has no named variable assignments the result is not a concrete witness.
+                // extract_counterexample is a stub that always returns an empty HashMap, so
+                // every SAT result is vacuous until model traversal is implemented.
+                let counterexample = self.extract_counterexample(&solver);
+                let is_vacuous = counterexample
+                    .as_ref()
+                    .is_none_or(|ce| ce.assignments.is_empty());
+                if is_vacuous {
+                    return VerificationResult::Unknown {
+                        reason: "Z3 found SAT but counterexample model has no named variable \
+                                 assignments (incomplete translator); result is not a concrete \
+                                 witness against the implementation"
+                            .to_string(),
+                    };
+                }
+                VerificationResult::Failed { counterexample }
+            }
             SatResult::Unknown => VerificationResult::Unknown {
                 reason: "Z3 returned Unknown (determinism check). Try --timeout 30.".to_string(),
             },
