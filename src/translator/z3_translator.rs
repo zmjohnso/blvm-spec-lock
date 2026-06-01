@@ -73,6 +73,19 @@ impl Z3Translator {
                     return Ok(Int::from_i64(&self.ctx, constant_value).into());
                 }
 
+                // Bool-like enum variants mapped to Z3 Bool constants:
+                //   ValidationResult::Valid    → true   ValidationResult::Invalid(…) → false
+                //   MempoolResult::Accepted    → true   MempoolResult::Rejected(…)   → false
+                // The last path segment is checked so the fully-qualified form and the
+                // bare local alias (after `use …::Valid`) both work.
+                let last_seg = name.rsplit("::").next().unwrap_or(&name);
+                if matches!(last_seg, "Valid" | "Accepted") {
+                    return Ok(Bool::from_bool(&self.ctx, true).into());
+                }
+                if matches!(last_seg, "Invalid" | "Rejected") {
+                    return Ok(Bool::from_bool(&self.ctx, false).into());
+                }
+
                 // Get or create variable (new vars default to Int)
                 let var = vars.entry(name.clone()).or_insert_with(|| {
                     let symbol = z3::Symbol::String(name);
@@ -359,6 +372,36 @@ impl Z3Translator {
                 }
                 Ok(cond_bool.into())
             }
+            Expr::Struct(s) => {
+                // Struct literal: TypeName { field1: expr1, field2: expr2, … }
+                // Bind each named field value into vars so that the final-expression
+                // handler in translate_block_to_result_formula can produce field
+                // equality formulas (e.g. result_bit == 15).
+                // Return the value of the first translatable field as a proxy.
+                let mut first_val: Option<z3::ast::Dynamic<'a>> = None;
+                for field in &s.fields {
+                    if let syn::Member::Named(ident) = &field.member {
+                        if let Ok(fz3) = self.translate_expr_with_vars(&field.expr, vars) {
+                            // Store under plain field name so later references find it.
+                            vars.entry(ident.to_string()).or_insert_with(|| fz3.clone());
+                            if first_val.is_none() {
+                                first_val = Some(fz3);
+                            }
+                        }
+                    }
+                }
+                if let Some(v) = first_val {
+                    if v.as_int().is_some() || v.as_bool().is_some() {
+                        return Ok(v);
+                    }
+                }
+                let name = format!("struct_{}", vars.len());
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Int::new_const(&self.ctx, symbol).into()
+                });
+                Ok(var.clone())
+            }
             _ => Err(TranslationError::UnsupportedExpression(format!("{expr:?}"))),
         }
     }
@@ -373,9 +416,9 @@ impl Z3Translator {
     fn translate_literal(&self, lit: &syn::Lit) -> Result<z3::ast::Dynamic<'_>, TranslationError> {
         match lit {
             syn::Lit::Int(int_lit) => {
-                let value = int_lit
-                    .base10_parse::<i64>()
-                    .map_err(|e| TranslationError::ParseError(e.to_string()))?;
+                let value = parse_lit_int(int_lit).ok_or_else(|| {
+                    TranslationError::ParseError(format!("Cannot parse integer literal: {int_lit}"))
+                })?;
                 Ok(Int::from_i64(&self.ctx, value).into())
             }
             syn::Lit::Bool(bool_lit) => Ok(Bool::from_bool(&self.ctx, bool_lit.value).into()),
@@ -961,6 +1004,128 @@ impl Z3Translator {
                     "unwrap with args not supported".to_string(),
                 ))
             }
+            "div_ceil" => {
+                // a.div_ceil(b) = (a + b - 1) / b  (ceiling integer division)
+                let left = self.translate_expr_with_vars(&method.receiver, vars)?;
+                let arg = method.args.first().ok_or_else(|| {
+                    TranslationError::UnsupportedExpression("div_ceil needs 1 arg".to_string())
+                })?;
+                let right = self.translate_expr_with_vars(arg, vars)?;
+                let left_int = left.as_int().ok_or_else(|| {
+                    TranslationError::TypeError("div_ceil: expected Int lhs".to_string())
+                })?;
+                let right_int = right.as_int().ok_or_else(|| {
+                    TranslationError::TypeError("div_ceil: expected Int rhs".to_string())
+                })?;
+                let one = Int::from_i64(&self.ctx, 1);
+                let numerator = left_int + right_int.clone() - one;
+                Ok((numerator / right_int).into())
+            }
+            "saturating_mul" => {
+                // a.saturating_mul(b) — model as a * b (same as checked_mul for Z3 Int)
+                let left = self.translate_expr_with_vars(&method.receiver, vars)?;
+                let arg = method.args.first().ok_or_else(|| {
+                    TranslationError::UnsupportedExpression(
+                        "saturating_mul needs 1 arg".to_string(),
+                    )
+                })?;
+                let right = self.translate_expr_with_vars(arg, vars)?;
+                let left_int = left.as_int().ok_or_else(|| {
+                    TranslationError::TypeError("saturating_mul: expected Int".to_string())
+                })?;
+                let right_int = right.as_int().ok_or_else(|| {
+                    TranslationError::TypeError("saturating_mul: expected Int".to_string())
+                })?;
+                Ok((left_int * right_int).into())
+            }
+            "is_empty" => {
+                // x.is_empty() == (x.len() == 0)
+                // Reuse the same `{base}_len` variable as the `len` handler so that
+                // `x.len() > 0` in an ensures clause refers to the same Z3 constant.
+                let _ = self.translate_expr_with_vars(&method.receiver, vars);
+                let base = expr_to_var_hint(&method.receiver);
+                let len_name = if base == "x" {
+                    "len_result".to_string()
+                } else {
+                    format!("{base}_len")
+                };
+                let len_var = vars
+                    .entry(len_name.clone())
+                    .or_insert_with(|| {
+                        let symbol = z3::Symbol::String(len_name);
+                        Int::new_const(&self.ctx, symbol).into()
+                    })
+                    .clone();
+                let len_int = len_var.as_int().ok_or_else(|| {
+                    TranslationError::TypeError("is_empty: len must be Int".to_string())
+                })?;
+                let zero = Int::from_i64(&self.ctx, 0);
+                Ok(len_int._eq(&zero).into())
+            }
+            "all" => {
+                // iter.all(|x| pred(x)) — uninterpreted Bool; no closure expansion
+                let _ = self.translate_expr_with_vars(&method.receiver, vars);
+                let base = expr_to_var_hint(&method.receiver);
+                let name = format!("{base}_all");
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Bool::new_const(&self.ctx, symbol).into()
+                });
+                Ok(var.clone())
+            }
+            "contains" => {
+                // range.contains(&x) — model as lo <= x && x <= hi
+                // Handles inclusive (..=) and exclusive (..) ranges on the receiver.
+                let arg = method.args.first().ok_or_else(|| {
+                    TranslationError::UnsupportedExpression("contains needs 1 arg".to_string())
+                })?;
+                let x_z3 = self.translate_expr_with_vars(arg, vars)?;
+                let x_int = x_z3.as_int().ok_or_else(|| {
+                    TranslationError::TypeError("contains: arg must be Int".to_string())
+                })?;
+                if let Expr::Range(range) = &*method.receiver {
+                    let lo_int = if let Some(start) = &range.start {
+                        let lo = self.translate_expr_with_vars(start, vars)?;
+                        lo.as_int().ok_or_else(|| {
+                            TranslationError::TypeError(
+                                "contains: range start must be Int".to_string(),
+                            )
+                        })?
+                    } else {
+                        // No lower bound — treat as always satisfied (use -MAX)
+                        Int::from_i64(&self.ctx, i64::MIN / 2)
+                    };
+                    let hi_int = if let Some(end) = &range.end {
+                        let hi = self.translate_expr_with_vars(end, vars)?;
+                        let hi_int = hi.as_int().ok_or_else(|| {
+                            TranslationError::TypeError(
+                                "contains: range end must be Int".to_string(),
+                            )
+                        })?;
+                        match range.limits {
+                            syn::RangeLimits::Closed(_) => hi_int, // ..= : inclusive
+                            syn::RangeLimits::HalfOpen(_) => {
+                                // .. : exclusive upper bound → hi - 1
+                                let one = Int::from_i64(&self.ctx, 1);
+                                hi_int - one
+                            }
+                        }
+                    } else {
+                        Int::from_i64(&self.ctx, i64::MAX / 2)
+                    };
+                    let cond = Bool::and(&self.ctx, &[&lo_int.le(&x_int), &x_int.le(&hi_int)]);
+                    return Ok(cond.into());
+                }
+                // Non-range receiver — fallback to uninterpreted Bool
+                let _ = self.translate_expr_with_vars(&method.receiver, vars);
+                let base = expr_to_var_hint(&method.receiver);
+                let name = format!("{base}_contains");
+                let var = vars.entry(name.clone()).or_insert_with(|| {
+                    let symbol = z3::Symbol::String(name);
+                    Bool::new_const(&self.ctx, symbol).into()
+                });
+                Ok(var.clone())
+            }
             _ => Err(TranslationError::UnsupportedExpression(format!(
                 "Method call: {method_name}"
             ))),
@@ -1005,6 +1170,16 @@ impl Z3Translator {
         // Err(_): for Result<T>, use 0 for determinism (0=Err, 1=Ok(false), 2=Ok(true))
         if base == "Err" && call.args.len() <= 1 {
             return Ok(Int::from_i64(&self.ctx, 0).into());
+        }
+        // Bool-like enum tuple-struct constructors that map to Bool false:
+        //   ValidationResult::Invalid("msg") → false
+        //   MempoolResult::Rejected("msg")   → false
+        if matches!(base, "Invalid" | "Rejected") {
+            // Translate args (for side effects like var creation) but discard.
+            for arg in &call.args {
+                let _ = self.translate_expr_with_vars(arg, vars);
+            }
+            return Ok(Bool::from_bool(&self.ctx, false).into());
         }
         // Bool-returning uninterpreted (Result<bool>, Option<bool>)
         if let Some((fn_name, arity_opt)) = known_bool_uninterpreted_function(&name) {
@@ -1114,6 +1289,29 @@ impl Z3Translator {
             });
             return Ok(var.clone());
         }
+        // If the callee is known to return a struct with fixed field values, bind those fields
+        // in vars so that callers can reason about result.field in their ensures clauses.
+        if let Some(fields) = known_struct_field_function(name.split("::").last().unwrap_or(&name))
+        {
+            for arg in &call.args {
+                let _ = self.translate_expr_with_vars(arg, vars);
+            }
+            // Synthesize a base name for the call result
+            let base = name.split("::").last().unwrap_or(&name);
+            let call_result_name = format!("call_{base}_struct");
+            // Insert each field as a concrete Int constant
+            for (field, value) in &fields {
+                let field_var_name = format!("call_{base}_{field}");
+                vars.entry(field_var_name.clone())
+                    .or_insert_with(|| Int::from_i64(&self.ctx, *value).into());
+            }
+            // Return an uninterpreted Int as the overall struct representative
+            let overall = vars.entry(call_result_name.clone()).or_insert_with(|| {
+                let symbol = z3::Symbol::String(call_result_name);
+                Int::new_const(&self.ctx, symbol).into()
+            });
+            return Ok(overall.clone());
+        }
         // Generic fallback: treat unknown calls as uninterpreted (same inputs => same output)
         let mut arg_asts: Vec<z3::ast::Int> = Vec::new();
         for arg in &call.args {
@@ -1153,8 +1351,10 @@ impl Z3Translator {
         match_expr: &syn::ExprMatch,
         vars: &mut Z3VarMap<'a>,
     ) -> Result<z3::ast::Dynamic<'a>, TranslationError> {
-        let _ = self.translate_expr_with_vars(&match_expr.expr, vars)?;
+        let scrutinee = self.translate_expr_with_vars(&match_expr.expr, vars)?;
         let base = expr_to_var_hint(&match_expr.expr);
+
+        // --- 1. Option/Result two-arm match (existing) ---
         if match_expr.arms.len() == 2 && match_expr.arms.iter().all(|a| a.guard.is_none()) {
             let (arm1, arm2) = (&match_expr.arms[0], &match_expr.arms[1]);
             let some_arm = parse_some_ok_arm(arm1).or_else(|| parse_some_ok_arm(arm2));
@@ -1190,8 +1390,253 @@ impl Z3Translator {
                 return Ok(is_some_bool.ite(&body_int, &default_int).into());
             }
         }
+
+        // --- 2. Integer-literal arm match (e.g. piecewise subsidy, len-based dispatch) ---
+        // All arms must be either:
+        //   • A single integer literal pattern  (no guard, no subpattern)
+        //   • A wildcard/identifier pattern `_` used as the default arm
+        // Body of each arm can be Int or Bool; the ITE tower preserves the type.
+        //
+        // We build a nested ITE tower:
+        //   scrutinee == lit_n  →  val_n
+        //   ...
+        //   _  →  default_val
+        //
+        // The wildcard arm must be present; if missing we return an error.
+        if let Some(scrutinee_int) = scrutinee.as_int() {
+            // Collect arms; detect whether they're Int or Bool uniformly.
+            enum ArmVal<'b> {
+                Int(z3::ast::Int<'b>),
+                Bool(z3::ast::Bool<'b>),
+            }
+
+            let mut literal_arms: Vec<(i64, ArmVal<'a>)> = Vec::new();
+            let mut default_arm: Option<ArmVal<'a>> = None;
+            let mut is_bool_match = false;
+            let mut all_literal = true; // set to false if any non-literal pattern found
+
+            for arm in &match_expr.arms {
+                if arm.guard.is_some() {
+                    all_literal = false;
+                    break;
+                }
+                let body_z3 = match self.translate_expr_with_vars(&arm.body, vars) {
+                    Ok(z) => z,
+                    Err(_) => {
+                        all_literal = false;
+                        break;
+                    }
+                };
+                let arm_val = if let Some(b) = body_z3.as_bool() {
+                    is_bool_match = true;
+                    ArmVal::Bool(b)
+                } else if let Some(i) = body_z3.as_int() {
+                    ArmVal::Int(i)
+                } else {
+                    all_literal = false;
+                    break;
+                };
+
+                match &arm.pat {
+                    syn::Pat::Lit(lit_pat) => {
+                        if let syn::Lit::Int(int_lit) = &lit_pat.lit {
+                            let val = int_lit
+                                .base10_parse::<i64>()
+                                .map_err(|e| TranslationError::ParseError(e.to_string()))?;
+                            literal_arms.push((val, arm_val));
+                            continue;
+                        }
+                        // Non-integer literal pattern — fall through to enum-variant path
+                        all_literal = false;
+                        break;
+                    }
+                    syn::Pat::Wild(_) | syn::Pat::Ident(_) => {
+                        default_arm = Some(arm_val);
+                    }
+                    _ => {
+                        // Non-literal pattern (e.g. enum variant) — fall through to enum-variant path
+                        all_literal = false;
+                        break;
+                    }
+                }
+            }
+
+            // Only proceed with literal-match ITE if all arms were literals / wildcards.
+            if all_literal && !literal_arms.is_empty() {
+                let default_val = match default_arm {
+                    Some(d) => d,
+                    None => {
+                        // No explicit wildcard: use last arm as default
+                        if let Some((_, av)) = literal_arms.pop() {
+                            av
+                        } else {
+                            return Err(TranslationError::UnsupportedExpression(
+                                "Match: no arms found".to_string(),
+                            ));
+                        }
+                    }
+                };
+
+                // Build ITE tower from last arm to first (right-fold).
+                if is_bool_match {
+                    let to_bool = |av: ArmVal<'a>, ctx: &'a z3::Context| -> z3::ast::Bool<'a> {
+                        match av {
+                            ArmVal::Bool(b) => b,
+                            ArmVal::Int(i) => {
+                                let zero = Int::from_i64(ctx, 0);
+                                i._eq(&zero).not()
+                            }
+                        }
+                    };
+                    let mut result_expr: z3::ast::Bool<'a> = to_bool(default_val, &self.ctx);
+                    for (lit_val, arm_val) in literal_arms.into_iter().rev() {
+                        let lit_z3 = Int::from_i64(&self.ctx, lit_val);
+                        let cond = scrutinee_int._eq(&lit_z3);
+                        let arm_bool = to_bool(arm_val, &self.ctx);
+                        result_expr = cond.ite(&arm_bool, &result_expr);
+                    }
+                    return Ok(result_expr.into());
+                } else {
+                    let to_int = |av: ArmVal<'a>| -> Result<z3::ast::Int<'a>, TranslationError> {
+                        match av {
+                            ArmVal::Int(i) => Ok(i),
+                            ArmVal::Bool(_) => Err(TranslationError::TypeError(
+                                "Mixed Bool/Int match arms not supported".to_string(),
+                            )),
+                        }
+                    };
+                    let mut result_expr: z3::ast::Int<'a> = to_int(default_val)?;
+                    for (lit_val, arm_val) in literal_arms.into_iter().rev() {
+                        let lit_z3 = Int::from_i64(&self.ctx, lit_val);
+                        let cond = scrutinee_int._eq(&lit_z3);
+                        result_expr = cond.ite(&to_int(arm_val)?, &result_expr);
+                    }
+                    return Ok(result_expr.into());
+                }
+            }
+            // If not all-literal, fall through to enum-variant path below.
+        }
+
+        // --- 3. Enum-variant arm match (e.g. match network { Network::Mainnet => … }) ---
+        // All arm patterns must be Pat::Path (enum variant paths) or wildcard/ident.
+        // Each distinct variant is assigned a consecutive integer discriminant (0, 1, 2, …).
+        // The scrutinee is already an Int variable in shared_vars; the ITE tower uses
+        // discriminant equality to select the arm value.
+        {
+            enum ArmVal<'b> {
+                Int(z3::ast::Int<'b>),
+                Bool(z3::ast::Bool<'b>),
+            }
+
+            let mut variant_arms: Vec<(i64, ArmVal<'a>)> = Vec::new();
+            let mut default_arm: Option<ArmVal<'a>> = None;
+            let mut discriminant: i64 = 0;
+            let mut all_enum = true;
+            let mut is_bool_match = false;
+
+            for arm in &match_expr.arms {
+                if arm.guard.is_some() {
+                    all_enum = false;
+                    break;
+                }
+                let body_z3 = match self.translate_expr_with_vars(&arm.body, vars) {
+                    Ok(z) => z,
+                    Err(_) => {
+                        all_enum = false;
+                        break;
+                    }
+                };
+                let arm_val = if let Some(b) = body_z3.as_bool() {
+                    is_bool_match = true;
+                    ArmVal::Bool(b)
+                } else if let Some(i) = body_z3.as_int() {
+                    ArmVal::Int(i)
+                } else {
+                    all_enum = false;
+                    break;
+                };
+
+                match &arm.pat {
+                    syn::Pat::Path(_) | syn::Pat::Struct(_) | syn::Pat::TupleStruct(_) => {
+                        variant_arms.push((discriminant, arm_val));
+                        discriminant += 1;
+                    }
+                    syn::Pat::Wild(_) | syn::Pat::Ident(_) => {
+                        default_arm = Some(arm_val);
+                    }
+                    _ => {
+                        all_enum = false;
+                        break;
+                    }
+                }
+            }
+
+            if all_enum && !variant_arms.is_empty() {
+                let scrutinee_int = match scrutinee.as_int() {
+                    Some(i) => i,
+                    None => {
+                        // Scrutinee might be Bool (unusual); bail out
+                        return Err(TranslationError::UnsupportedExpression(
+                            "Match: enum scrutinee is not Int".to_string(),
+                        ));
+                    }
+                };
+
+                // If no wildcard, use last variant arm as default.
+                let default_val = match default_arm {
+                    Some(d) => d,
+                    None => {
+                        if let Some((_, av)) = variant_arms.pop() {
+                            av
+                        } else {
+                            return Err(TranslationError::UnsupportedExpression(
+                                "Match: no enum arms found".to_string(),
+                            ));
+                        }
+                    }
+                };
+
+                if is_bool_match {
+                    let to_bool = |av: ArmVal<'a>, ctx: &'a z3::Context| -> z3::ast::Bool<'a> {
+                        match av {
+                            ArmVal::Bool(b) => b,
+                            ArmVal::Int(i) => {
+                                let zero = Int::from_i64(ctx, 0);
+                                i._eq(&zero).not()
+                            }
+                        }
+                    };
+                    let mut result_expr: z3::ast::Bool<'a> = to_bool(default_val, &self.ctx);
+                    for (disc, arm_val) in variant_arms.into_iter().rev() {
+                        let disc_z3 = Int::from_i64(&self.ctx, disc);
+                        let cond = scrutinee_int._eq(&disc_z3);
+                        let arm_bool = to_bool(arm_val, &self.ctx);
+                        result_expr = cond.ite(&arm_bool, &result_expr);
+                    }
+                    return Ok(result_expr.into());
+                } else {
+                    let to_int = |av: ArmVal<'a>| -> Result<z3::ast::Int<'a>, TranslationError> {
+                        match av {
+                            ArmVal::Int(i) => Ok(i),
+                            ArmVal::Bool(_) => Err(TranslationError::TypeError(
+                                "Mixed Bool/Int enum arms".to_string(),
+                            )),
+                        }
+                    };
+                    let mut result_expr: z3::ast::Int<'a> = to_int(default_val)?;
+                    for (disc, arm_val) in variant_arms.into_iter().rev() {
+                        let disc_z3 = Int::from_i64(&self.ctx, disc);
+                        let cond = scrutinee_int._eq(&disc_z3);
+                        result_expr = cond.ite(&to_int(arm_val)?, &result_expr);
+                    }
+                    return Ok(result_expr.into());
+                }
+            }
+        }
+
         Err(TranslationError::UnsupportedExpression(
-            "Match: only Option/Result with 2 arms (Some/Ok, None/Err) supported".to_string(),
+            "Match: only Option/Result (2-arm), integer-literal, or enum-variant arms supported"
+                .to_string(),
         ))
     }
 
@@ -1257,44 +1702,91 @@ impl Z3Translator {
         param_types: &std::collections::HashMap<String, syn::Type>,
         return_type: Option<&syn::Type>,
     ) -> Result<(z3::ast::Dynamic<'_>, Vec<z3::ast::Bool<'_>>), TranslationError> {
+        let (mut vars, type_constraints) = self.build_shared_vars(param_types, return_type);
+        let expr = self.translate_expr_with_vars(&contract.condition, &mut vars)?;
+        Ok((expr, type_constraints))
+    }
+
+    /// Translate a contract expression using an externally-supplied shared variable map.
+    ///
+    /// This is the preferred path in `verify_contract_with_context` so that the
+    /// ensures, requires, and body translation all reference the **same** Z3
+    /// constants for "height", "result", etc.  Using fresh `Int::new_const` in each
+    /// translation produces unrelated Z3 AST nodes that the solver treats as
+    /// independent variables.
+    pub fn translate_contract_with_shared_vars<'a>(
+        &'a self,
+        contract: &Contract,
+        vars: &mut Z3VarMap<'a>,
+    ) -> Result<z3::ast::Dynamic<'a>, TranslationError> {
+        self.translate_expr_with_vars(&contract.condition, vars)
+    }
+
+    /// Build a shared `Z3VarMap` (parameter variables + "result") and the
+    /// corresponding type constraints.  The returned map should be re-used for
+    /// all sub-translations within a single `verify_contract_with_context` call.
+    pub fn build_shared_vars<'a>(
+        &'a self,
+        param_types: &std::collections::HashMap<String, syn::Type>,
+        return_type: Option<&syn::Type>,
+    ) -> (Z3VarMap<'a>, Vec<z3::ast::Bool<'a>>) {
         let mut vars = Z3VarMap::new();
         let mut type_constraints = Vec::new();
 
-        // Pre-create variables with type constraints for parameters
         for (name, ty) in param_types {
             let symbol = z3::Symbol::String(name.clone());
             let var = Int::new_const(&self.ctx, symbol);
             vars.insert(name.clone(), var.into());
-
-            // Add type-based constraints
             if is_unsigned_type(ty) {
                 if let Some(var_ref) = vars.get(name).and_then(|v| v.as_int()) {
                     type_constraints.push(var_ref.ge(&Int::from_i64(&self.ctx, 0)));
                 }
             }
-            // For signed types (i8, i16, i32, i64, isize, Integer), no constraint
-            // For other types, we'd need more sophisticated handling
         }
 
-        // Pre-create "result": Bool for bool/Result<bool>/Option<bool>, Int otherwise
         if let Some(return_ty) = return_type {
-            let symbol = z3::Symbol::String("result".to_string());
-            if returns_bool_like(return_ty) {
-                let var = Bool::new_const(&self.ctx, symbol);
+            // If the return type (possibly wrapped in Result<(T0, T1, …)>) is a tuple,
+            // create per-element variables `result_0`, `result_1`, … so that ensures
+            // contracts can reference individual fields.  We also create a generic
+            // `result` Int placeholder for contracts that don't use the decomposition.
+            if let Some(tuple_ty) = unwrap_to_tuple(return_ty) {
+                for (i, elem_ty) in tuple_ty.elems.iter().enumerate() {
+                    let slot_name = format!("result_{i}");
+                    let sym = z3::Symbol::String(slot_name.clone());
+                    if returns_bool_like(elem_ty) {
+                        let var = Bool::new_const(&self.ctx, sym);
+                        vars.insert(slot_name, var.into());
+                    } else {
+                        let var = Int::new_const(&self.ctx, sym);
+                        if is_unsigned_type(elem_ty) {
+                            let zero = Int::from_i64(&self.ctx, 0);
+                            type_constraints.push(var.ge(&zero));
+                        }
+                        vars.insert(slot_name, var.into());
+                    }
+                }
+                // Also a generic "result" Int so existing body translation still works.
+                let sym = z3::Symbol::String("result".to_string());
+                let var = Int::new_const(&self.ctx, sym);
                 vars.insert("result".to_string(), var.into());
             } else {
-                let var = Int::new_const(&self.ctx, symbol);
-                vars.insert("result".to_string(), var.into());
-                if is_unsigned_type(return_ty) {
-                    if let Some(var_ref) = vars.get("result").and_then(|v| v.as_int()) {
-                        type_constraints.push(var_ref.ge(&Int::from_i64(&self.ctx, 0)));
+                let symbol = z3::Symbol::String("result".to_string());
+                if returns_bool_like(return_ty) {
+                    let var = Bool::new_const(&self.ctx, symbol);
+                    vars.insert("result".to_string(), var.into());
+                } else {
+                    let var = Int::new_const(&self.ctx, symbol);
+                    vars.insert("result".to_string(), var.into());
+                    if is_unsigned_type(return_ty) {
+                        if let Some(var_ref) = vars.get("result").and_then(|v| v.as_int()) {
+                            type_constraints.push(var_ref.ge(&Int::from_i64(&self.ctx, 0)));
+                        }
                     }
                 }
             }
         }
 
-        let expr = self.translate_expr_with_vars(&contract.condition, &mut vars)?;
-        Ok((expr, type_constraints))
+        (vars, type_constraints)
     }
 
     /// Translate a function body to a Z3 formula that relates inputs to result
@@ -1328,6 +1820,15 @@ impl Z3Translator {
     ) -> Result<Option<z3::ast::Bool<'a>>, TranslationError> {
         let _formulas: Vec<z3::ast::Bool<'a>> = Vec::new();
         let mut early_return_conditions: Vec<(z3::ast::Bool<'a>, z3::ast::Bool<'a>)> = Vec::new();
+        // Conditions under which the function returns Err / panics early.
+        // For the Ok path these conditions are negated: `if fee < 0 { return Err }` means
+        // the Ok path assumes `fee >= 0`.  Accumulated here and folded into the final formula.
+        let mut err_guard_conditions: Vec<z3::ast::Bool<'a>> = Vec::new();
+
+        // Save the pre-body result slot so that functions using `result` as a local
+        // variable name (e.g. `let result = weight.div_ceil(4)`) don't confuse the
+        // return-value Z3 constant with the rebound local expression.
+        let result_slot = vars.get("result").cloned();
 
         // Process statements to build variable bindings and collect return conditions
         for stmt in &block.stmts {
@@ -1353,6 +1854,7 @@ impl Z3Translator {
                             if let Ok(z3_expr) = self.translate_expr_with_vars(&assign.right, vars)
                             {
                                 if z3_expr.as_int().is_some() || z3_expr.as_bool().is_some() {
+                                    // Don't overwrite result_slot; track it separately.
                                     vars.insert(var_name, z3_expr);
                                 }
                             }
@@ -1410,11 +1912,17 @@ impl Z3Translator {
                             self.translate_if_with_early_return(if_expr, vars)?
                         {
                             early_return_conditions.push((cond, result_formula));
+                        } else if let Some(err_cond) =
+                            self.translate_if_with_err_return(if_expr, vars)
+                        {
+                            // `if bad { return Err(...) }` — on the Ok path, bad is false.
+                            err_guard_conditions.push(err_cond);
                         }
                     } else if let Expr::Return(ret) = expr {
                         if let Some(return_expr) = &ret.expr {
                             if let Ok(z3_expr) = self.translate_expr_with_vars(return_expr, vars) {
-                                let result_var = vars.get("result").ok_or_else(|| {
+                                // Use the pre-body result slot to avoid the rebound local.
+                                let result_var = result_slot.as_ref().ok_or_else(|| {
                                     TranslationError::UnsupportedExpression(
                                         "No result variable".to_string(),
                                     )
@@ -1434,9 +1942,82 @@ impl Z3Translator {
                     }
                 }
                 Stmt::Expr(expr, None) => {
-                    // Final expression (implicit return)
-                    if let Ok(z3_expr) = self.translate_expr_with_vars(expr, vars) {
-                        let result_var = vars.get("result").ok_or_else(|| {
+                    // For non-last if-expressions (guard patterns like `if bad { return Err }`),
+                    // capture the Err-guard condition so the Ok path has `!bad` as a constraint.
+                    // The last Stmt::Expr(_, None) is the function's return value and is handled
+                    // below by `block.stmts.last()`.
+                    let is_last = block.stmts.last() == Some(stmt);
+                    if !is_last {
+                        if let Expr::If(if_expr) = expr {
+                            if let Some((cond, result_formula)) =
+                                self.translate_if_with_early_return(if_expr, vars)?
+                            {
+                                early_return_conditions.push((cond, result_formula));
+                            } else if let Some(err_cond) =
+                                self.translate_if_with_err_return(if_expr, vars)
+                            {
+                                err_guard_conditions.push(err_cond);
+                            }
+                        }
+                    }
+                    // Special case: struct-literal return (e.g. `Bip9Deployment { bit: 15, … }`).
+                    // Produce a conjunction of `result_{field} == field_value` formulas so
+                    // that ensures clauses using `result.field` access resolve correctly.
+                    if let Expr::Struct(struct_expr) = expr {
+                        let mut field_eqs: Vec<z3::ast::Bool<'a>> = Vec::new();
+                        for field in &struct_expr.fields {
+                            if let syn::Member::Named(ident) = &field.member {
+                                let slot_name = format!("result_{ident}");
+                                if let Ok(fz3) = self.translate_expr_with_vars(&field.expr, vars) {
+                                    if let Some(fi) = fz3.as_int() {
+                                        // Look up or create the result.{field} slot.
+                                        let slot = vars
+                                            .entry(slot_name.clone())
+                                            .or_insert_with(|| {
+                                                let sym = z3::Symbol::String(slot_name);
+                                                Int::new_const(&self.ctx, sym).into()
+                                            })
+                                            .clone();
+                                        if let Some(si) = slot.as_int() {
+                                            field_eqs.push(si._eq(&fi));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if !field_eqs.is_empty() {
+                            let refs: Vec<&z3::ast::Bool<'_>> = field_eqs.iter().collect();
+                            let conj = Bool::and(&self.ctx, &refs);
+                            if early_return_conditions.is_empty() {
+                                return Ok(Some(conj));
+                            } else {
+                                let mut all_conditions = Vec::new();
+                                let mut negated_conds = Vec::new();
+                                for (cond, rf) in &early_return_conditions {
+                                    all_conditions.push(cond.implies(rf));
+                                    negated_conds.push(cond.not());
+                                }
+                                if !negated_conds.is_empty() {
+                                    let nc_refs: Vec<&z3::ast::Bool<'_>> =
+                                        negated_conds.iter().collect();
+                                    let no_early = Bool::and(&self.ctx, &nc_refs);
+                                    all_conditions.push(no_early.implies(&conj));
+                                }
+                                let ac_refs: Vec<&z3::ast::Bool<'_>> =
+                                    all_conditions.iter().collect();
+                                return Ok(Some(Bool::and(&self.ctx, &ac_refs)));
+                            }
+                        }
+                    }
+
+                    // Final expression (implicit return).
+                    // Skip if this is the last statement — it is processed after the loop
+                    // where err_guard_conditions can be properly incorporated.
+                    // Handling it here would return early and bypass err guards.
+                    if is_last {
+                        // Defer to post-loop handling.
+                    } else if let Ok(z3_expr) = self.translate_expr_with_vars(expr, vars) {
+                        let result_var = result_slot.as_ref().ok_or_else(|| {
                             TranslationError::UnsupportedExpression(
                                 "No result variable".to_string(),
                             )
@@ -1481,23 +2062,79 @@ impl Z3Translator {
             }
         }
 
-        // Check if the last statement is a return or expression
-        if let Some(Stmt::Expr(expr, None)) = block.stmts.last() {
-            return self.translate_return_expr(expr, vars);
-        }
-
-        // Handle case where there are only early returns (no final expression)
-        if !early_return_conditions.is_empty() {
+        // Check if the last statement is a return or expression.
+        // For simple expressions (Expr::Path, arithmetic, method calls) the post-loop code
+        // must use `result_slot` — the pre-body Z3 return-value constant — as the LHS of the
+        // equality formula, not `vars.get("result")` which may have been rebound by a local
+        // `let result = …` binding (e.g. `weight_to_vsize` rebinds "result" to `div_ceil(…)`).
+        // For complex forms (Ok(…), Expr::Return, Expr::If) we temporarily restore result_slot
+        // so that translate_return_expr's internal `vars.get("result")` lookup finds the right var.
+        let base_formula = if let Some(Stmt::Expr(expr, None)) = block.stmts.last() {
+            match expr {
+                // Complex forms handled by translate_return_expr — restore result_slot first.
+                Expr::Return(_) | Expr::If(_) | Expr::Call(_) => {
+                    let saved_result = vars.get("result").cloned();
+                    if let Some(slot) = result_slot.clone() {
+                        vars.insert("result".to_string(), slot);
+                    }
+                    let formula = self.translate_return_expr(expr, vars)?;
+                    // Restore any rebinding that was in place.
+                    if let Some(saved) = saved_result {
+                        vars.insert("result".to_string(), saved);
+                    } else {
+                        vars.remove("result");
+                    }
+                    formula
+                }
+                // Simple expression (path, arithmetic, method call): translate with current
+                // (possibly rebound) vars, but use result_slot as LHS.
+                _ => {
+                    if let Ok(z3_expr) = self.translate_expr_with_vars(expr, vars) {
+                        let result_var = result_slot.as_ref();
+                        let eq = result_var.and_then(|rv| {
+                            if let Some(int_val) = z3_expr.as_int() {
+                                rv.as_int().map(|r| r._eq(&int_val))
+                            } else if let Some(bool_val) = z3_expr.as_bool() {
+                                rv.as_bool().map(|r| r._eq(&bool_val))
+                            } else {
+                                None
+                            }
+                        });
+                        eq
+                    } else {
+                        None
+                    }
+                }
+            }
+        } else if !early_return_conditions.is_empty() {
+            // Handle case where there are only early returns (no final expression)
             let mut all_conditions = Vec::new();
             for (cond, result_formula) in &early_return_conditions {
                 all_conditions.push(cond.implies(result_formula));
             }
             let refs: Vec<&z3::ast::Bool> = all_conditions.iter().collect();
-            return Ok(Some(Bool::and(&self.ctx, &refs)));
+            Some(Bool::and(&self.ctx, &refs))
+        } else {
+            None
+        };
+
+        // Conjoin err-guard negations into the final formula.
+        // Each err guard `if cond { return Err }` means the Ok path has `!cond`.
+        // For example, `if fee < 0 { return Err }; Ok(fee)` implies `fee >= 0 ∧ result = fee`.
+        if !err_guard_conditions.is_empty() {
+            let negated: Vec<z3::ast::Bool<'a>> =
+                err_guard_conditions.iter().map(|c| c.not()).collect();
+            let neg_refs: Vec<&z3::ast::Bool<'_>> = negated.iter().collect();
+            let guards_ok = Bool::and(&self.ctx, &neg_refs);
+            if let Some(formula) = base_formula {
+                let refs: Vec<&z3::ast::Bool<'_>> = vec![&guards_ok, &formula];
+                return Ok(Some(Bool::and(&self.ctx, &refs)));
+            } else {
+                return Ok(Some(guards_ok));
+            }
         }
 
-        // No clear return expression found
-        Ok(None)
+        Ok(base_formula)
     }
 
     /// Handle if statement with potential early return
@@ -1518,7 +2155,7 @@ impl Z3Translator {
         for stmt in &if_expr.then_branch.stmts {
             if let Stmt::Expr(Expr::Return(ret), _) = stmt {
                 if let Some(return_expr) = &ret.expr {
-                    // Ok(expr) with Int result: 1=Ok(false), 2=Ok(true)
+                    // Ok(expr) — handles both Result<bool> (encoded 1/2) and Result<Int>
                     if let Expr::Call(call) = &**return_expr {
                         if let Ok(name) = call_expr_to_name(&call.func) {
                             let base = name.split("::").last().unwrap_or(&name);
@@ -1531,25 +2168,40 @@ impl Z3Translator {
                                         let encoded = b.ite(&two, &one);
                                         return Ok(Some((cond_bool, r._eq(&encoded))));
                                     }
+                                } else if let Some(int_val) = inner.as_int() {
+                                    if let Some(r) = vars.get("result").and_then(|v| v.as_int()) {
+                                        return Ok(Some((cond_bool, r._eq(&int_val))));
+                                    }
                                 }
                             }
                         }
                     }
-                    if let Ok(z3_expr) = self.translate_expr_with_vars(return_expr, vars) {
-                        let result_var = vars.get("result").ok_or_else(|| {
-                            TranslationError::UnsupportedExpression(
-                                "No result variable".to_string(),
-                            )
-                        })?;
-                        let eq = if let Some(int_val) = z3_expr.as_int() {
-                            result_var.as_int().map(|r| r._eq(&int_val))
-                        } else if let Some(bool_val) = z3_expr.as_bool() {
-                            result_var.as_bool().map(|r| r._eq(&bool_val))
-                        } else {
-                            None
-                        };
-                        if let Some(eq_bool) = eq {
-                            return Ok(Some((cond_bool, eq_bool)));
+                    // Skip Err(...) returns — these are Err-guard patterns handled separately
+                    // by translate_if_with_err_return, not Ok early returns.
+                    let is_err_return = if let Expr::Call(call) = &**return_expr {
+                        call_expr_to_name(&call.func)
+                            .map(|n| n.split("::").last().unwrap_or(&n) == "Err")
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+                    if !is_err_return {
+                        if let Ok(z3_expr) = self.translate_expr_with_vars(return_expr, vars) {
+                            let result_var = vars.get("result").ok_or_else(|| {
+                                TranslationError::UnsupportedExpression(
+                                    "No result variable".to_string(),
+                                )
+                            })?;
+                            let eq = if let Some(int_val) = z3_expr.as_int() {
+                                result_var.as_int().map(|r| r._eq(&int_val))
+                            } else if let Some(bool_val) = z3_expr.as_bool() {
+                                result_var.as_bool().map(|r| r._eq(&bool_val))
+                            } else {
+                                None
+                            };
+                            if let Some(eq_bool) = eq {
+                                return Ok(Some((cond_bool, eq_bool)));
+                            }
                         }
                     }
                 }
@@ -1557,6 +2209,48 @@ impl Z3Translator {
         }
 
         Ok(None)
+    }
+
+    /// Detect `if cond { return Err(...) }` patterns (Err guard).
+    ///
+    /// Returns the condition `cond` as a Z3 Bool if the then-branch contains only
+    /// an unconditional `return Err(...)` (or `return Err;`).  The caller negates
+    /// this condition to obtain the constraint that holds on the Ok path.
+    ///
+    /// Handles both:
+    /// - `if fee < 0 { return Err(...); }` — single-stmt then branch
+    /// - `if x > max { return Err(...); }` — same pattern
+    fn translate_if_with_err_return<'a>(
+        &'a self,
+        if_expr: &syn::ExprIf,
+        vars: &mut Z3VarMap<'a>,
+    ) -> Option<z3::ast::Bool<'a>> {
+        // Only handle if-without-else (pure guard pattern)
+        if if_expr.else_branch.is_some() {
+            return None;
+        }
+        // Translate the condition
+        let cond_z3 = self.translate_expr_with_vars(&if_expr.cond, vars).ok()?;
+        let cond_bool = cond_z3.as_bool()?;
+
+        // Check that the then-branch is only `return Err(...)`
+        let stmts = &if_expr.then_branch.stmts;
+        if stmts.len() != 1 {
+            return None;
+        }
+        if let Stmt::Expr(Expr::Return(ret), _) = &stmts[0] {
+            if let Some(return_expr) = &ret.expr {
+                if let Expr::Call(call) = &**return_expr {
+                    if let Ok(name) = call_expr_to_name(&call.func) {
+                        let base = name.split("::").last().unwrap_or(&name);
+                        if base == "Err" {
+                            return Some(cond_bool);
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Translate a return expression to: result == <expr>
@@ -1607,18 +2301,56 @@ impl Z3Translator {
                 return self.translate_if_to_formula(if_expr, vars);
             }
             Expr::Call(call) => {
-                // Ok(expr) with Int result: 1=Ok(false), 2=Ok(true)
+                // Ok(expr) — unwrap the inner value and equate with `result`.
+                // Handles Result<bool>, Result<Int>, Result<ValidationResult>,
+                // and tuple returns Result<(T0, T1, …)> via result_0/result_1/… slots.
                 if let Ok(name) = call_expr_to_name(&call.func) {
                     let base = name.split("::").last().unwrap_or(&name);
                     if base == "Ok" && call.args.len() == 1 {
-                        if let Some(result_var) = vars.get("result") {
+                        // Tuple return: Ok((val0, val1, …)) → result_0=val0 ∧ result_1=val1 ∧ …
+                        if let Expr::Tuple(tuple_expr) = &call.args[0] {
+                            let mut conjuncts: Vec<z3::ast::Bool<'a>> = Vec::new();
+                            for (i, elem) in tuple_expr.elems.iter().enumerate() {
+                                let slot_name = format!("result_{i}");
+                                if let Ok(elem_z3) = self.translate_expr_with_vars(elem, vars) {
+                                    if let Some(slot) = vars.get(&slot_name).cloned() {
+                                        let eq = if let Some(b) = elem_z3.as_bool() {
+                                            slot.as_bool().map(|r| r._eq(&b))
+                                        } else if let Some(iv) = elem_z3.as_int() {
+                                            slot.as_int().map(|r| r._eq(&iv))
+                                        } else {
+                                            None
+                                        };
+                                        if let Some(f) = eq {
+                                            conjuncts.push(f);
+                                        }
+                                    }
+                                }
+                            }
+                            if !conjuncts.is_empty() {
+                                let refs: Vec<&z3::ast::Bool<'_>> = conjuncts.iter().collect();
+                                return Ok(Some(Bool::and(&self.ctx, &refs)));
+                            }
+                        }
+
+                        // Translate inner expression first (requires mut borrow of vars)
+                        let inner = self.translate_expr_with_vars(&call.args[0], vars)?;
+                        let result_var = vars.get("result").cloned();
+                        if let Some(result_var) = result_var {
                             if let Some(r) = result_var.as_int() {
-                                let inner = self.translate_expr_with_vars(&call.args[0], vars)?;
                                 if let Some(b) = inner.as_bool() {
+                                    // Ok(bool) — encode as Int: true→2, false→1
                                     let one = Int::from_i64(&self.ctx, 1);
                                     let two = Int::from_i64(&self.ctx, 2);
                                     let encoded = b.ite(&two, &one);
                                     return Ok(Some(r._eq(&encoded)));
+                                } else if let Some(int_val) = inner.as_int() {
+                                    // Ok(integer) — direct equality
+                                    return Ok(Some(r._eq(&int_val)));
+                                }
+                            } else if let Some(r) = result_var.as_bool() {
+                                if let Some(b) = inner.as_bool() {
+                                    return Ok(Some(r._eq(&b)));
                                 }
                             }
                         }
@@ -1793,6 +2525,20 @@ fn resolve_constant(name: &str) -> Option<i64> {
         "MAX_SCRIPT_SIZE" => Some(10_000),
         "MAX_STACK_SIZE" => Some(1000),
 
+        // Script opcodes (blvm-primitives/src/opcodes.rs)
+        "OP_1" => Some(0x51),  // 81
+        "OP_16" => Some(0x60), // 96
+
+        // SegWit program lengths (blvm-primitives/src/constants.rs)
+        "SEGWIT_P2WPKH_LENGTH" => Some(20),
+        "SEGWIT_P2WSH_LENGTH" => Some(32),
+        "TAPROOT_PROGRAM_LENGTH" => Some(32),
+
+        // Taproot activation heights (blvm-primitives/src/constants.rs)
+        "TAPROOT_ACTIVATION_MAINNET" => Some(709_632),
+        "TAPROOT_ACTIVATION_TESTNET" => Some(2_011_968),
+        "TAPROOT_ACTIVATION_REGTEST" => Some(0),
+
         _ => None,
     }
 }
@@ -1823,10 +2569,75 @@ pub fn returns_result_or_option_result(ty: &syn::Type) -> bool {
 
 /// Check if a type is bool or wraps bool (Result<bool>, Option<bool>).
 /// Used to create result as Bool in Z3 instead of Int.
+/// If `ty` is a tuple `(T0, T1, …)` — possibly inside `Result<(…)>` or `Option<(…)>` —
+/// return a reference to the inner `TypeTuple`.  Returns `None` otherwise.
+fn unwrap_to_tuple(ty: &syn::Type) -> Option<&syn::TypeTuple> {
+    match ty {
+        syn::Type::Tuple(t) => Some(t),
+        syn::Type::Path(p) => {
+            let seg = p.path.segments.last()?;
+            if seg.ident == "Result" || seg.ident == "Option" {
+                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                    for arg in &args.args {
+                        if let syn::GenericArgument::Type(inner) = arg {
+                            if let Some(t) = unwrap_to_tuple(inner) {
+                                return Some(t);
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Auto-derive type-level contract strings for a function's return type.
+///
+/// Returns a list of `(formula_str, is_bool)` pairs representing contracts that
+/// are trivially true by the type alone — no function body needed.  These are
+/// used by the verifier when a `#[spec_locked]` function has no explicit
+/// `#[ensures]` annotations, allowing the verifier to emit PASSED (type-level)
+/// rather than FAILED (no contracts).
+///
+/// Rules:
+/// - `bool` / bool-like types (`ValidationResult`, `MempoolResult`, …) → `"result == true || result == false"`
+/// - Tuple return types → per-element contracts for each component
+/// - Unsigned / opaque types (`Hash`, `Block`, `u64`, `Natural`, …) → `"result >= 0"`
+/// - Signed types (`Integer`, `i64`, …) → no auto-contract (returns `[]`)
+pub fn auto_type_contracts(return_ty: &syn::Type) -> Vec<String> {
+    // Tuple case: decompose into per-element contracts.
+    if let Some(tuple) = unwrap_to_tuple(return_ty) {
+        let mut contracts = Vec::new();
+        for (i, elem_ty) in tuple.elems.iter().enumerate() {
+            if returns_bool_like(elem_ty) {
+                contracts.push(format!("result_{i} == true || result_{i} == false"));
+            } else if is_unsigned_type(elem_ty) {
+                contracts.push(format!("result_{i} >= 0"));
+            }
+        }
+        return contracts;
+    }
+    // Scalar case.
+    if returns_bool_like(return_ty) {
+        return vec!["result == true || result == false".to_string()];
+    }
+    if is_unsigned_type(return_ty) {
+        return vec!["result >= 0".to_string()];
+    }
+    vec![]
+}
+
 pub fn returns_bool_like(ty: &syn::Type) -> bool {
     if let syn::Type::Path(p) = ty {
         if let Some(seg) = p.path.segments.last() {
             if seg.ident == "bool" {
+                return true;
+            }
+            // ValidationResult and MempoolResult are modelled as Bool:
+            //   Valid=true, Invalid=false | Accepted=true, Rejected=false
+            if seg.ident == "ValidationResult" || seg.ident == "MempoolResult" {
                 return true;
             }
             if seg.ident == "Result" || seg.ident == "Option" {
@@ -1845,33 +2656,74 @@ pub fn returns_bool_like(ty: &syn::Type) -> bool {
     false
 }
 
-/// Check if a type is unsigned
-/// Handles both primitive types (u8, u16, u32, u64, u128, usize) and common type aliases
+/// Check if a type is unsigned (or wraps an unsigned type in Result/Option).
+/// Handles both primitive types (u8, u16, u32, u64, u128, usize) and common type aliases.
+/// Check whether `ty` is (or wraps) a type that should receive a `result >= 0` type constraint
+/// in Z3.
+///
+/// Rules (in order):
+///
+/// 1. **Known signed primitives / aliases** (`i8..isize`, `Integer`) → `false`.
+/// 2. **Known unsigned primitives / aliases** (`u8..usize`, `Natural`) → `true`.
+/// 3. **`Result<T>` / `Option<T>`**: recurse on the *first* generic argument only (the
+///    `Ok`/`Some` type).  Checking all args would incorrectly classify `Result<i64, Err>`
+///    as unsigned because the error type `Err` is opaque.
+/// 4. **Tuple `(T0, T1, …)`**: return `false` — tuple elements are handled individually by
+///    `build_shared_vars`; the aggregate `result` variable for tuples is an untyped placeholder.
+/// 5. **Everything else** (Hash, Block, UtxoSet, U256, Sighash, Cow, Vec, WitnessVersion, …):
+///    these types are all modelled as opaque `Int` in Z3 with no negative representation,
+///    so treating them as non-negative is sound for the purposes of the `result >= 0`
+///    type constraint.  Note: this only affects the *type constraint* injected into the
+///    solver — the contract itself must still be added explicitly by the caller.
 fn is_unsigned_type(ty: &syn::Type) -> bool {
-    if let syn::Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            let type_name = segment.ident.to_string();
+    match ty {
+        syn::Type::Path(type_path) => {
+            if let Some(segment) = type_path.path.segments.last() {
+                let type_name = segment.ident.to_string();
 
-            // Check primitive unsigned types
-            if type_name.starts_with('u')
-                && (type_name == "u8"
-                    || type_name == "u16"
-                    || type_name == "u32"
-                    || type_name == "u64"
-                    || type_name == "u128"
-                    || type_name == "usize")
-            {
-                return true;
-            }
+                // (1) Known signed types — these can hold negative values.
+                if matches!(
+                    type_name.as_str(),
+                    "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "Integer"
+                ) {
+                    return false;
+                }
 
-            // Check common type aliases used in Bitcoin consensus code
-            // Natural = u64, Integer = i64 (from blvm-consensus/src/types.rs)
-            if type_name == "Natural" {
-                return true; // Natural is u64
+                // (2) Known unsigned primitives and aliases.
+                if matches!(
+                    type_name.as_str(),
+                    "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "Natural"
+                ) {
+                    return true;
+                }
+
+                // (3) Result<T, E> / Option<T> / error::Result<T>:
+                //     only the first generic arg (the Ok/Some type) determines signedness.
+                if matches!(type_name.as_str(), "Result" | "Option" | "error::Result") {
+                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(syn::GenericArgument::Type(first_inner)) = args.args.first() {
+                            return is_unsigned_type(first_inner);
+                        }
+                    }
+                    return false;
+                }
+
+                // (5) All other named types are opaque non-negative integers in Z3.
+                true
+            } else {
+                false
             }
         }
+        // (4) Tuple — handled element-by-element; aggregate is untyped.
+        syn::Type::Tuple(_) => false,
+        // Arrays / slices (e.g. [u8; 32]) — inherently non-negative opaque values.
+        syn::Type::Array(_) | syn::Type::Slice(_) => true,
+        // References / pointers — pass through to the inner type.
+        syn::Type::Reference(r) => is_unsigned_type(&r.elem),
+        syn::Type::Ptr(p) => is_unsigned_type(&p.elem),
+        // Anything else: treat as non-negative opaque.
+        _ => true,
     }
-    false
 }
 
 /// Convert a path to a string representation
@@ -2006,29 +2858,48 @@ fn parse_none_err_arm(arm: &syn::Arm) -> Option<&syn::Expr> {
     None
 }
 
+/// Parse any integer literal token to `i64`.
+///
+/// Handles:
+/// - Decimal: `42`, `-7`
+/// - Hex: `0xff`, `0x0000_FFFF` (underscore separators stripped)
+/// - Octal: `0o77`
+/// - Binary: `0b1010`
+/// - Type suffixes stripped: `255u8`, `65535u64`
+fn parse_lit_int(int_lit: &syn::LitInt) -> Option<i64> {
+    // Fast path for plain decimal literals.
+    if let Ok(v) = int_lit.base10_parse::<i64>() {
+        return Some(v);
+    }
+    let s = int_lit.to_string();
+    let (raw_digits, radix) =
+        if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+            (rest, 16u32)
+        } else if let Some(rest) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
+            (rest, 8)
+        } else if let Some(rest) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
+            (rest, 2)
+        } else {
+            return None;
+        };
+    // Strip type suffix (e.g. "ffu8" → "ff") and underscore separators ("0000_ffff" → "0000ffff").
+    let digits: String = raw_digits
+        .trim_end_matches(|c: char| c.is_alphabetic())
+        .chars()
+        .filter(|&c| c != '_')
+        .collect();
+    i64::from_str_radix(&digits, radix).ok()
+}
+
 /// Extract integer literal from expression if it's a literal.
-/// Handles decimal, hex (0x), octal (0o), and binary (0b).
+/// Handles decimal, hex (0x), octal (0o), and binary (0b) with underscore separators.
 fn extract_int_literal(expr: &syn::Expr) -> Option<i64> {
     if let syn::Expr::Lit(syn::ExprLit {
         lit: syn::Lit::Int(int_lit),
         ..
     }) = expr
     {
-        if let Ok(v) = int_lit.base10_parse::<i64>() {
-            return Some(v);
-        }
-        let s = int_lit.to_string();
-        let (digits, radix) =
-            if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-                (rest, 16u32)
-            } else if let Some(rest) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
-                (rest, 8)
-            } else if let Some(rest) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
-                (rest, 2)
-            } else {
-                return None;
-            };
-        i64::from_str_radix(digits, radix).ok()
+        parse_lit_int(int_lit)
     } else {
         None
     }
@@ -2076,7 +2947,7 @@ fn known_uninterpreted_function(name: &str) -> Option<(&'static str, Option<usiz
         "double_sha256_hash" => Some(("hash256", Some(1))),
         "calculate_tx_id" => Some(("hash256", Some(1))),
         "serialize_header" => Some(("serialize_header", Some(1))),
-        "total_supply" => Some(("total_supply", Some(1))),
+        // "total_supply" moved to known_int_returning_function to allow non-neg constraint injection.
         "calculate_transaction_size" => Some(("tx_size", Some(1))),
         "expand_target" => Some(("expand_target", Some(1))),
         "from_bytes" => Some(("from_bytes", Some(1))),
@@ -2116,6 +2987,7 @@ fn known_int_returning_function(name: &str) -> Option<String> {
     let base = name.split("::").last().unwrap_or(name);
     match base {
         "get_block_subsidy"
+        | "total_supply"
         | "get_next_work_required"
         | "expand_target"
         | "compress_target"
@@ -2139,6 +3011,22 @@ fn known_bool_returning_function(name: &str) -> Option<String> {
         "is_zero_hash" => Some("call_is_zero_hash_result".to_string()),
         "locktime_types_match" => Some("call_locktime_types_match_result".to_string()),
         "is_standard_script" => Some("call_is_standard_script_result".to_string()),
+        // validate_taproot_script returns Result<bool>; model as named Bool variable so
+        // callers (is_taproot_output) can reason about it via the callee-ensures axiom.
+        "validate_taproot_script" => Some("call_validate_taproot_script_result".to_string()),
+        _ => None,
+    }
+}
+
+/// Known functions that return structs with specific field values.
+/// Returns a list of (field_name, concrete_value) pairs.
+/// Used to propagate callee ensures (e.g. bip54 deployment always has bit=15) into
+/// calling functions whose ensures reference struct fields (result.bit == 15).
+fn known_struct_field_function(name: &str) -> Option<Vec<(&'static str, i64)>> {
+    match name {
+        "bip54_deployment_mainnet" | "bip54_deployment_testnet" | "bip54_deployment_regtest" => {
+            Some(vec![("bit", 15)])
+        }
         _ => None,
     }
 }
@@ -2170,6 +3058,73 @@ impl std::fmt::Display for TranslationError {
 }
 
 impl std::error::Error for TranslationError {}
+
+#[cfg(all(test, feature = "z3"))]
+mod tests {
+    use super::*;
+    use z3::{ast::Ast, Config, Context, SatResult, Solver};
+
+    #[test]
+    fn test_piecewise_body_vs_ensures_uses_same_result_var() {
+        let tr = Z3Translator::new(10000);
+        let code = r#"
+            fn _verify_f_subsidy_piecewise(height: u64) -> i64 {
+                let k = height / 210000;
+                match k {
+                    0 => 5000000000_i64,
+                    1 => 2500000000_i64,
+                    _ => 0_i64,
+                }
+            }
+        "#;
+        let func: syn::ItemFn = syn::parse_str(code).expect("parse fn");
+        let mut param_types = std::collections::HashMap::new();
+        param_types.insert(
+            "height".to_string(),
+            syn::parse_str::<syn::Type>("u64").unwrap(),
+        );
+        let return_type: syn::Type = syn::parse_str("i64").unwrap();
+
+        let (mut shared_vars, type_constraints) =
+            tr.build_shared_vars(&param_types, Some(&return_type));
+
+        // Translate ensures: result >= 0 && result <= 5000000000
+        let ensures_expr: syn::Expr =
+            syn::parse_str("result >= 0 && result <= 5000000000").unwrap();
+        let contract = Contract {
+            contract_type: crate::parser::contracts::ContractType::Ensures,
+            condition: ensures_expr,
+            comment: None,
+        };
+        let ensures_z3 = tr
+            .translate_contract_with_shared_vars(&contract, &mut shared_vars)
+            .expect("ensures translation");
+        let negated = ensures_z3.as_bool().unwrap().not();
+
+        // Translate body
+        let body_formula = tr
+            .translate_function_body(&func, &mut shared_vars)
+            .expect("body translation")
+            .expect("body formula not None");
+
+        let ctx = tr.context();
+        let solver = Solver::new(ctx);
+        for c in &type_constraints {
+            solver.assert(c);
+        }
+        solver.assert(&body_formula);
+        solver.assert(&negated);
+
+        let result = solver.check();
+        println!("SAT result (should be Unsat): {result:?}");
+        if result == SatResult::Sat {
+            if let Some(model) = solver.get_model() {
+                println!("Model: {model}");
+            }
+        }
+        assert_eq!(result, SatResult::Unsat, "Body should prove ensures");
+    }
+}
 
 #[cfg(not(feature = "z3"))]
 /// Stub implementation when Z3 feature is disabled

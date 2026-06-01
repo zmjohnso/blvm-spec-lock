@@ -26,6 +26,18 @@ pub struct DriftResult {
     pub unparseable_omitted_outside_scope: usize,
     /// With `--scoped-formulas`: formula drift rows omitted outside locked § prefixes (informational)
     pub unparseable_formulas_omitted_outside_scope: usize,
+    /// Parseable but unconditional `result == true/false` claims with no antecedent.
+    /// These are almost always false universal claims (the function does not always return the same value).
+    pub suspect_universal_claims: Vec<SuspectUniversalClaim>,
+}
+
+/// A spec property that parses to an unconditional `result == true/false` with no antecedent.
+/// Likely indicates a missing conditional that was accidentally dropped from the spec.
+#[derive(Debug, Clone)]
+pub struct SuspectUniversalClaim {
+    pub section: String,
+    pub function: String,
+    pub condition: String,
 }
 
 /// A spec contract that couldn't be parsed for verification
@@ -157,6 +169,7 @@ pub fn detect_drift(
         functions.iter().filter_map(|f| f.section.clone()).collect();
 
     let mut unparseable_formulas = Vec::new();
+    let mut suspect_universal_claims = Vec::new();
 
     if spec_paths.iter().all(|p| p.exists()) && !spec_paths.is_empty() {
         let parser =
@@ -165,17 +178,41 @@ pub fn detect_drift(
         for (section_id, section) in parser.iter_sections() {
             for func in &section.functions {
                 for contract in &func.contracts {
-                    if condition::extract_parseable_condition(&contract.condition).is_none() {
-                        let short = if contract.condition.len() > 80 {
-                            format!("{}...", &contract.condition[..77])
+                    let raw = &contract.condition;
+                    if condition::extract_parseable_condition(raw).is_none() {
+                        let short = if raw.len() > 80 {
+                            format!("{}...", &raw[..77])
                         } else {
-                            contract.condition.clone()
+                            raw.clone()
                         };
                         unparseable_spec_contracts.push(UnparseableContract {
                             section: section_id.clone(),
                             function: func.name.clone(),
                             condition: short,
                         });
+                    }
+                }
+
+                // Lint: check the *original* property statement (before implication-stripping
+                // translation) for unconditional `result = \text{true/false}` with no antecedent.
+                // `contract.condition` is already translated and stripped, so we look at the raw
+                // `property.statement` from the spec parser instead.
+                for property in &func.properties {
+                    let stmt = &property.statement;
+                    // Quick pre-filter: must contain "result" and "true" or "false"
+                    if !(stmt.contains("result")
+                        && (stmt.contains("true") || stmt.contains("false")))
+                    {
+                        continue;
+                    }
+                    if let Some(ref parsed) = condition::extract_parseable_condition(stmt) {
+                        if is_suspect_universal(stmt, parsed) {
+                            suspect_universal_claims.push(SuspectUniversalClaim {
+                                section: section_id.clone(),
+                                function: func.name.clone(),
+                                condition: stmt.trim().to_string(),
+                            });
+                        }
                     }
                 }
             }
@@ -234,7 +271,39 @@ pub fn detect_drift(
         unparseable_formulas,
         unparseable_omitted_outside_scope,
         unparseable_formulas_omitted_outside_scope,
+        suspect_universal_claims,
     })
+}
+
+/// Returns true when a spec condition is an unconditional `result == true/false` claim with no
+/// antecedent.  These are almost always spec errors: the writer forgot the `\implies` and
+/// antecedent, accidentally asserting that a function *always* returns the same value.
+///
+/// Heuristic: the raw spec text has no implication markers AND the parsed form is exactly
+/// `result == true` or `result == false` (allowing whitespace normalisation).
+fn is_suspect_universal(raw: &str, parsed: &str) -> bool {
+    // Unconditional booleans only — `result == 0` / `result == 1` have legitimate uses (e.g.
+    // constants, epoch-0 formulas).  We flag only boolean tautologies.
+    // Normalise whitespace for comparison (parsed form may or may not have spaces around `==`).
+    let parsed_norm: String = parsed.split_whitespace().collect::<Vec<_>>().join(" ");
+    let parsed_norm = parsed_norm.trim();
+    if parsed_norm != "result == true"
+        && parsed_norm != "result==true"
+        && parsed_norm != "result == false"
+        && parsed_norm != "result==false"
+    {
+        return false;
+    }
+    // Accept the claim only if the spec text contains an implication or biconditional.
+    // If neither is present the claim is a bare `result = true/false` with no guard.
+    let raw_lc = raw.to_lowercase();
+    let has_antecedent = raw_lc.contains("\\implies")
+        || raw_lc.contains("\\rightarrow")
+        || raw_lc.contains("\\iff")
+        || raw_lc.contains("\\land")
+        || raw_lc.contains("=>")
+        || raw_lc.contains("\\neg");
+    !has_antecedent
 }
 
 /// Same gate as **`spec_enrich`** for **`F_*`** bodies: **`extract_parseable_condition`** plus **`syn::Expr`** parse.
@@ -349,6 +418,12 @@ fn contracts_similar(spec: &str, impl_contract: &str) -> bool {
     let spec_norm = normalize_contract(spec);
     let impl_norm = normalize_contract(impl_contract);
 
+    // Spec `Defined: true` / literal true is the weakest postcondition — any tighter
+    // inline #[ensures] on the implementation is a valid refinement, not drift.
+    if spec_norm == "true" {
+        return true;
+    }
+
     // Check for exact match
     if spec_norm == impl_norm {
         return true;
@@ -459,6 +534,29 @@ pub fn format_drift_human(result: &DriftResult) -> String {
         output.push('\n');
     }
 
+    if !result.suspect_universal_claims.is_empty() {
+        output
+            .push_str("🔍 Suspect Universal Claims (`result == true/false` with no antecedent):\n");
+        output
+            .push_str("------------------------------------------------------------------------\n");
+        output.push_str(
+            "   These may be missing conditionals, e.g. `A \\implies result = \\text{true}`.\n",
+        );
+        for u in result.suspect_universal_claims.iter().take(10) {
+            output.push_str(&format!(
+                "  {}::{}: {}\n",
+                u.section, u.function, u.condition
+            ));
+        }
+        if result.suspect_universal_claims.len() > 10 {
+            output.push_str(&format!(
+                "  ... and {} more\n",
+                result.suspect_universal_claims.len() - 10
+            ));
+        }
+        output.push('\n');
+    }
+
     output.push_str("Summary:\n");
     output.push_str("--------\n");
     output.push_str(&format!(
@@ -497,12 +595,19 @@ pub fn format_drift_human(result: &DriftResult) -> String {
         "  Missing implementations: {}\n",
         result.missing_implementations.len()
     ));
+    if !result.suspect_universal_claims.is_empty() {
+        output.push_str(&format!(
+            "  Suspect universal claims (lint): {}\n",
+            result.suspect_universal_claims.len()
+        ));
+    }
 
     if result.mismatched_contracts.is_empty()
         && result.missing_from_spec.is_empty()
         && result.missing_implementations.is_empty()
         && result.unparseable_spec_contracts.is_empty()
         && result.unparseable_formulas.is_empty()
+        && result.suspect_universal_claims.is_empty()
     {
         output.push_str("\n✅ No drift detected! Spec and implementation are in sync.\n");
     }
@@ -541,6 +646,11 @@ pub fn format_drift_json(result: &DriftResult) -> String {
             "body_preview": u.body_preview,
         })).collect::<Vec<_>>(),
         "unparseable_formulas_omitted_outside_scope": result.unparseable_formulas_omitted_outside_scope,
+        "suspect_universal_claims": result.suspect_universal_claims.iter().map(|u| serde_json::json!({
+            "section": u.section,
+            "function": u.function,
+            "condition": u.condition,
+        })).collect::<Vec<_>>(),
     })
     .to_string()
 }

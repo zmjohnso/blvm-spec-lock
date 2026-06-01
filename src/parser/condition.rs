@@ -42,6 +42,13 @@ pub fn is_result_equality(cond: &str) -> bool {
     re.is_some_and(|r| r.is_match(cond))
 }
 
+/// Parse "result(args1) \neq result(args2)" / "may differ" non-determinism annotation.
+/// These document that a function is input-dependent (existential claim, not a postcondition).
+fn is_result_inequality(cond: &str) -> bool {
+    let re = Regex::new(r"result\s*\([^)]*\)\s*(?:\\neq|!=|≠)\s*result\s*\([^)]*\)").ok();
+    re.is_some_and(|r| r.is_match(cond)) || cond.contains("may differ")
+}
+
 /// Known enum mappings: spec name -> integer value (e.g. SighashType)
 const ENUM_MAPPINGS: &[(&str, i64)] = &[
     ("AllLegacy", 0x00),
@@ -94,9 +101,32 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     let mut cond = condition.trim().to_string();
     cond = cond.replace('$', "");
 
+    // Strip \text{...} wrappers early so downstream handlers (requires, \in, etc.) see plain
+    // identifiers. \text{MAX\_MONEY} → MAX\_MONEY, \text{requires} → requires.
+    // This preserves website rendering: MathJax/KaTeX uses \text{} for roman font in math mode.
+    if cond.contains(r"\text{") {
+        if let Ok(re) = Regex::new(r"\\text\{([^}]*)\}") {
+            cond = re.replace_all(&cond, "$1").to_string();
+        }
+    }
+
+    // Normalise LaTeX-escaped braces (\{ → {, \} → }) so that pattern checks like
+    // `\in {true, false}` match whether the spec wrote `\{` (correct LaTeX) or `{` (bare).
+    if cond.contains(r"\{") || cond.contains(r"\}") {
+        cond = cond.replace(r"\{", "{").replace(r"\}", "}");
+    }
+
     // Noise fragments: accept as "true" so they don't inflate unparseable count
     if let Some("noise") = classify_noise(&cond) {
         return Some("true".to_string());
+    }
+
+    // Universally-quantified expressions (∀ / \forall) are mathematical theorems,
+    // not function-level postconditions.  They appear in spec Formulas/Theorems and
+    // are proven separately via spec_witnesses.  Returning None tells the enricher to
+    // skip them rather than pushing an unparseable contract that causes PARTIAL.
+    if cond.contains(r"\forall") || cond.contains('∀') {
+        return None;
     }
 
     // Normalize common spec typos (extra braces, malformed sets)
@@ -154,6 +184,13 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     // Mathematical: ∀a,b: a=b → f(a)=f(b). Full determinism verification needs two-run Z3.
     if is_result_equality(&cond) {
         return Some("true".to_string()); // Determinism invariant; verifier can extend later
+    }
+    // Non-determinism annotation: result(tx_1,...) \neq result(tx_2,...) "may differ"
+    // These are existential annotations documenting that the function IS input-dependent.
+    // They are NOT universal postconditions and reduce to `result != result` (contradiction)
+    // when both result(...) calls are normalized.  Treat as trivially true.
+    if is_result_inequality(&cond) {
+        return Some("true".to_string());
     }
 
     // Descriptive text → mathematical form (invariants we accept as axioms)
@@ -246,15 +283,42 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         return Some("true".to_string()); // Option is always Some or None
     }
 
-    // "requires t \in [0, 1]" → t >= 0 && t <= 1
+    // "requires(expr)" → expr   (e.g. \text{requires}(bits > 0) after \text{} stripping)
     if let Some(req) = cond.find("requires") {
         let after_req = cond[req + 8..].trim();
-        if let Some(in_bracket) = after_req.find(r"\in [0, 1]") {
-            let before = after_req[..in_bracket].trim();
-            if let Some(var) = before.split_whitespace().last() {
-                let var = var.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
-                if !var.is_empty() && var.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    return Some(format!("{var} >= 0 && {var} <= 1"));
+        if let Some(inner) = after_req.strip_prefix('(') {
+            // Extract balanced inner expression
+            let mut depth = 0u32;
+            let mut close = None;
+            for (i, ch) in inner.chars().enumerate() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        if depth == 0 {
+                            close = Some(i);
+                            break;
+                        } else {
+                            depth -= 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(idx) = close {
+                let expr = inner[..idx].trim();
+                if !expr.is_empty() {
+                    cond = expr.to_string();
+                }
+            }
+        } else {
+            // "requires t \in [0, 1]" → t >= 0 && t <= 1
+            if let Some(in_bracket) = after_req.find(r"\in [0, 1]") {
+                let before = after_req[..in_bracket].trim();
+                if let Some(var) = before.split_whitespace().last() {
+                    let var = var.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+                    if !var.is_empty() && var.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        return Some(format!("{var} >= 0 && {var} <= 1"));
+                    }
                 }
             }
         }
@@ -401,6 +465,16 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     }
 
     // Preprocess LaTeX
+    // Strip \text{...} wrappers: unwrap the inner content so \text{MAX\_MONEY} → MAX\_MONEY.
+    // This preserves website rendering (MathJax/KaTeX uses \text{} for roman font in math mode)
+    // while letting the Rust expression parser see a plain identifier.
+    let core_owned;
+    let core = if let Ok(re) = Regex::new(r"\\text\{([^}]*)\}") {
+        core_owned = re.replace_all(core, "$1").to_string();
+        &*core_owned
+    } else {
+        core
+    };
     let mut core = core
         .replace("\\cdot", "*")
         .replace("\\cdotp", "*")
@@ -466,6 +540,8 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         return Some("(result == true || result == false)".to_string());
     }
 
+    // Normalize LaTeX-escaped underscores before lexing so INITIAL\_SUBSIDY → INITIAL_SUBSIDY.
+    let core = core.replace(r"\_", "_");
     let mut lexer = lexer::Lexer::new(&core);
     let tokens = lexer.lex();
     if !tokens.is_empty() {
@@ -480,14 +556,69 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         let mut rust = rust.trim().to_string();
         // LaTeX / Unicode implication becomes lexer token `=>`, which is not a Rust `syn::Expr` operator.
         // Match **`translate_property_to_rust`**: keep the conclusion only for simple single-arrow formulas.
+        let had_implication = rust.contains("=>");
         if let Some(pos) = rust.find("=>") {
             let after = rust[pos + 2..].trim();
             if !after.is_empty() && !after.contains("=>") && after.len() < 200 {
                 rust = after.to_string();
             }
         }
+        // Skip bare `result == true/false` from implication reduction: the antecedent
+        // (precondition) was dropped, making the conclusion misleading as a universal ensures.
+        if had_implication && is_bare_result_bool(&rust) {
+            return None;
+        }
         while rust.contains("  ") {
             rust = rust.replace("  ", " ");
+        }
+        // Strip trailing parenthetical prose annotations.
+        //
+        // Spec conditions like `result >= 0 (flags are a 32-bit unsigned mask...)` or
+        // `result > 0 (difficulty is always positive)` have explanatory comments inside
+        // parentheses that the lexer keeps verbatim.  These make `syn::parse_str` fail.
+        // Detect and strip: the whole string ends with `)`, the `(...)` content starts with
+        // an alphabetic word and contains spaces (prose, not a call expression), and there
+        // is a comparison / arithmetic operator BEFORE the opening `(`.
+        if rust.ends_with(')') {
+            if let Some(paren_start) = rust.rfind('(') {
+                let before_paren = rust[..paren_start].trim();
+                let paren_content = &rust[paren_start + 1..rust.len() - 1];
+                let is_prose_comment = paren_content.contains(' ')
+                    && paren_content
+                        .trim_start()
+                        .starts_with(|c: char| c.is_alphabetic());
+                let before_has_op = before_paren.contains(">=")
+                    || before_paren.contains("<=")
+                    || before_paren.contains("==")
+                    || before_paren.contains("!=")
+                    || before_paren.contains('>')
+                    || before_paren.contains('<');
+                if is_prose_comment && before_has_op && !before_paren.is_empty() {
+                    rust = before_paren.to_string();
+                }
+            }
+        }
+        // Strip trailing prose suffixes: "for all valid blocks", "for all h ...", etc.
+        // These appear in spec conditions like `result > 0 for all valid blocks`.
+        if let Some(pos) = rust.find(" for all ") {
+            let before = rust[..pos].trim();
+            if !before.is_empty() {
+                rust = before.to_string();
+            }
+        } else if let Some(pos) = rust.find(" for valid ") {
+            let before = rust[..pos].trim();
+            if !before.is_empty() {
+                rust = before.to_string();
+            }
+        }
+        // Re-normalize after stripping.
+        while rust.contains("  ") {
+            rust = rust.replace("  ", " ");
+        }
+        // Skip conditions that reference struct field access or slice indexing — these
+        // patterns cannot be modelled by the Z3 Int/Bool translator and produce vacuous proofs.
+        if condition_has_member_access(&rust) {
+            return None;
         }
         if (rust.contains(">=")
             || rust.contains("<=")
@@ -506,26 +637,68 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
     }
     let core = core
         .replace("\\implies", " => ")
+        .replace("\\Rightarrow", " => ") // \Rightarrow (⇒) — same implication semantics
         .replace("\\iff", " == ")
         .replace("\\land", " && ")
         .replace("\\lor", " || ")
         .replace("\\geq", " >= ")
         .replace("\\leq", " <= ")
         .replace("\\neq", " != ");
+    // Restore LaTeX-escaped underscores (\_) before the blanket backslash removal so that
+    // identifiers like INITIAL\_SUBSIDY survive as INITIAL_SUBSIDY.
+    let core = core.replace(r"\_", "_");
     let core = core.replace('\\', " ");
     let core = Regex::new(r"result\s*\([^)]+\)")
         .ok()
         .map(|re| re.replace_all(&core, "result").to_string())
         .unwrap_or(core);
     let mut core = core.trim().to_string();
+    let had_implication = core.contains("=>");
     if let Some(pos) = core.find("=>") {
         let after = core[pos + 2..].trim();
         if !after.is_empty() && !after.contains("=>") && after.len() < 200 {
             core = after.to_string();
         }
     }
+    // Skip bare `result == true/false` from implication reduction.
+    if had_implication && is_bare_result_bool(&core) {
+        return None;
+    }
     while core.contains("  ") {
         core = core.replace("  ", " ");
+    }
+    // Strip trailing parenthetical prose annotations (fallback path).
+    if core.ends_with(')') {
+        if let Some(paren_start) = core.rfind('(') {
+            let before_paren = core[..paren_start].trim();
+            let paren_content = &core[paren_start + 1..core.len() - 1];
+            let is_prose = paren_content.contains(' ')
+                && paren_content
+                    .trim_start()
+                    .starts_with(|c: char| c.is_alphabetic());
+            let before_has_op = before_paren.contains(">=")
+                || before_paren.contains("<=")
+                || before_paren.contains("==")
+                || before_paren.contains("!=")
+                || before_paren.contains('>')
+                || before_paren.contains('<');
+            if is_prose && before_has_op && !before_paren.is_empty() {
+                core = before_paren.to_string();
+            }
+        }
+    }
+    if let Some(pos) = core.find(" for all ") {
+        let before = core[..pos].trim();
+        if !before.is_empty() {
+            core = before.to_string();
+        }
+    }
+    while core.contains("  ") {
+        core = core.replace("  ", " ");
+    }
+    // Skip conditions with struct field access or slice indexing.
+    if condition_has_member_access(&core) {
+        return None;
     }
     if (core.contains(">=")
         || core.contains("<=")
@@ -542,5 +715,89 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         Some(core.trim().to_string())
     } else {
         None
+    }
+}
+
+/// Returns `true` when the condition is a bare `result == true`, `result == false`,
+/// `result != true`, or `result != false` with no other operands. These are produced
+/// by implication reduction (`A ⟹ result = true` → `result == true`) and are
+/// misleading as universal `#[ensures]` contracts because the antecedent was dropped.
+fn is_bare_result_bool(cond: &str) -> bool {
+    let s = cond.trim();
+    matches!(
+        s,
+        "result == true"
+            | "result == false"
+            | "result != true"
+            | "result != false"
+            | "result == 1"
+            | "result == 0"
+    )
+}
+
+/// Returns `true` when the condition string references struct field access (`.field`)
+/// or slice indexing (`[n]`) patterns that the Z3 Int/Bool translator cannot model.
+/// These patterns arise from spec Properties that reference concrete data-structure
+/// layouts (e.g. `tx.inputs[0].prevout.index`, `tx.inputs.len()`).
+fn condition_has_member_access(cond: &str) -> bool {
+    // Slice indexing: `identifier[integer]` or `][` (nested)
+    if Regex::new(r"\w\[\d+\]")
+        .ok()
+        .is_some_and(|re| re.is_match(cond))
+    {
+        return true;
+    }
+    // Method calls or field access: `.identifier(` or `.identifier` followed by space/end/operator
+    if Regex::new(r"\.\w+[\s(]")
+        .ok()
+        .is_some_and(|re| re.is_match(cond))
+    {
+        return true;
+    }
+    // `.len()` specifically
+    if cond.contains(".len()") || cond.contains(".len(") {
+        return true;
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_parseable_condition;
+
+    /// Both LaTeX brace styles for \in {true, false} must extract to the same Rust expression.
+    /// Before the \{ normalisation fix, the escaped form silently fell through to `None`.
+    #[test]
+    fn in_set_bool_escaped_braces() {
+        // Proper LaTeX: \{ and \} around the set
+        let escaped = r"result \in \{\text{true}, \text{false}\}";
+        assert_eq!(
+            extract_parseable_condition(escaped),
+            Some("(result == true || result == false)".to_string()),
+            "escaped-brace form \\in \\{{...\\}} must parse"
+        );
+    }
+
+    #[test]
+    fn in_set_bool_bare_braces() {
+        // Unescaped form (also seen in some spec lines)
+        let bare = r"result \in {true, false}";
+        assert_eq!(
+            extract_parseable_condition(bare),
+            Some("(result == true || result == false)".to_string()),
+            "bare-brace form \\in {{...}} must parse"
+        );
+    }
+
+    #[test]
+    fn geq_zero_non_negative() {
+        let result = extract_parseable_condition(r"result \geq 0");
+        assert!(result.is_some(), "\\geq 0 must extract to Some");
+        let s = result.unwrap();
+        assert!(
+            s.contains(">=") && s.contains("result") && s.contains("0"),
+            "extracted: {:?}",
+            s
+        );
     }
 }

@@ -636,10 +636,22 @@ impl SpecParser {
                 description: None,
             };
 
-            // Compute this function's block (from after signature to next function)
-            let func_marker = format!("**{name}**");
-            let block_content: &str = if let Some(func_pos) = content.find(&func_marker) {
-                let start = func_pos + func_marker.len();
+            // Compute this function's block (from after signature to next function).
+            // Use "**Name**:" (with colon) to anchor to the real function heading and avoid
+            // matching inline bold references like `see **FunctionName** below`.
+            let func_marker_colon = format!("**{name}**:");
+            let func_marker_plain = format!("**{name}**");
+            let block_content: &str = if let Some(func_pos) = content
+                .find(&func_marker_colon)
+                .or_else(|| content.find(&func_marker_plain))
+            {
+                // Advance past the marker (use the colon form if found, plain otherwise).
+                let marker_len = if content[func_pos..].starts_with(&func_marker_colon) {
+                    func_marker_colon.len()
+                } else {
+                    func_marker_plain.len()
+                };
+                let start = func_pos + marker_len;
                 let remaining = &content[start..];
                 let block_end = Self::find_next_function_boundary(remaining);
                 &remaining[..block_end]
@@ -1026,8 +1038,12 @@ impl SpecParser {
                                 if let Some(tail) = rest.strip_prefix(':') {
                                     let tail = tail.trim_start();
                                     // Prose after "(Qualifier):" (e.g. **Definition** (BIP141 …): For each…)
-                                    // is not a function boundary; real specs put $…$ immediately after ':'.
-                                    if tail.starts_with('$') || tail.starts_with('\\') {
+                                    // is not a function boundary; real specs put a single-dollar inline
+                                    // type annotation immediately after ':' (e.g. $T_1 \times T_2 \to T_3$).
+                                    // Block math formulas ($$...$$) or prose are NOT function type signatures.
+                                    let is_inline_math =
+                                        tail.starts_with('$') && !tail.starts_with("$$");
+                                    if is_inline_math || tail.starts_with('\\') {
                                         return abs_pos;
                                     }
                                 }
@@ -1039,7 +1055,30 @@ impl SpecParser {
                     }
                     // Closing ** is followed by ':' — function spec unless it's a known non-function header
                     let bold = &after[..close_pos];
-                    if bold == "Definition" {
+                    if matches!(
+                        bold,
+                        "Definition"
+                            | "Properties"
+                            | "Note"
+                            | "Theorem"
+                            | "Formula"
+                            | "Halving Schedule"
+                            | "Required Methods"
+                            | "Consensus Requirements"
+                            | "Validation Rules"
+                            | "Structure"
+                    ) {
+                        search_start = abs_pos + 2 + close_pos + 2;
+                        continue;
+                    }
+                    // A real function-spec header has a math type annotation immediately after
+                    // the colon (e.g. `**Name**: $T_1 \times T_2 \to T_3$`).  Descriptive
+                    // subsection headers like `**Precomputed hashes**:` or
+                    // `**Sighash type handling**:` are followed by a newline or prose — not
+                    // `$`.  Skipping them prevents premature block truncation that would cut
+                    // off the `**Properties**:` section for the current function.
+                    let type_annotation = after_close[1..].trim_start(); // skip ':'
+                    if !type_annotation.starts_with('$') && !type_annotation.starts_with('\\') {
                         search_start = abs_pos + 2 + close_pos + 2;
                         continue;
                     }
@@ -1073,8 +1112,38 @@ impl SpecParser {
             .or_else(|| block_content.find("**Properties** :"))
             .or_else(|| block_content.find("**Properties** (Updated):"))
             .or_else(|| block_content.find("**Properties** (Updated) :"));
+        if std::env::var("SPEC_LOCK_DEBUG_PROPS").is_ok() && func.name == "CalculateTransactionSize"
+        {
+            eprintln!(
+                "PROPS_DEBUG[{}]: props_start={:?} block_content={:?}",
+                func.name,
+                props_start,
+                &block_content[..block_content.len().min(600)]
+            );
+        }
         if let Some(props_start) = props_start {
-            let props_section = &block_content[props_start..];
+            let props_raw = &block_content[props_start..];
+            // Stop at the next bold section header (e.g. **Note**:, **Required Methods**:,
+            // **Extension field** (BIP 342):, etc.) to avoid capturing non-property bullets
+            // from adjacent sections.  The optional `(?:\([^)]*\)\s*)?` handles qualified
+            // headers like `**Extension field** (BIP 342):`.
+            let section_header_re = Regex::new(r"\*\*[A-Z][^*]+\*\*\s*(?:\([^)]*\)\s*)?:")
+                .map_err(|e| format!("Regex error: {e}"))?;
+            let props_end = section_header_re
+                .find_at(props_raw, 2) // skip the opening **Properties**: itself
+                .map(|m| m.start())
+                .unwrap_or(props_raw.len());
+            let props_section = &props_raw[..props_end];
+            if std::env::var("SPEC_LOCK_DEBUG_PROPS").is_ok()
+                && func.name == "CalculateTransactionSize"
+            {
+                eprintln!(
+                    "PROPS_DEBUG[{}]: props_end={} props_section={:?}",
+                    func.name,
+                    props_end,
+                    &props_section[..props_section.len().min(200)]
+                );
+            }
             for cap in property_re.captures_iter(props_section) {
                 let name = cap.get(1).unwrap().as_str().trim().to_string();
                 let statement = cap.get(2).unwrap().as_str().trim().to_string();

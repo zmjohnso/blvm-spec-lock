@@ -90,7 +90,7 @@ fn z3_sat_smoke(fs: &FormulaSpec, timeout_ms: u64) -> Z3FormulaPhase {
     };
     let mut verifier = Z3Verifier::new(timeout_ms.max(1));
     match verifier.check_ensures_formula_sat_smoke(&contract) {
-        VerificationResult::Verified => Z3FormulaPhase::SatSmokeOk,
+        VerificationResult::Verified { .. } => Z3FormulaPhase::SatSmokeOk,
         VerificationResult::Failed { .. } => Z3FormulaPhase::UnsatContradiction,
         VerificationResult::Unknown { reason } => Z3FormulaPhase::Unknown { reason },
         VerificationResult::Error { error } => Z3FormulaPhase::Error { message: error },

@@ -31,8 +31,16 @@ fn format_human(results: &[(FunctionToVerify, VerificationResult)]) -> String {
         ));
 
         match result {
-            VerificationResult::Passed => {
+            VerificationResult::Passed { body_translated } => {
                 output.push_str("  ✅ Status: PASSED\n");
+                output.push_str(&format!(
+                    "  body_translated: {}\n",
+                    if *body_translated {
+                        "yes"
+                    } else {
+                        "no (type-level only)"
+                    }
+                ));
             }
             VerificationResult::Failed {
                 contract,
@@ -79,7 +87,7 @@ fn format_human(results: &[(FunctionToVerify, VerificationResult)]) -> String {
     // Summary
     let passed = results
         .iter()
-        .filter(|(_, r)| matches!(r, VerificationResult::Passed))
+        .filter(|(_, r)| matches!(r, VerificationResult::Passed { .. }))
         .count();
     let failed = results
         .iter()
@@ -127,7 +135,7 @@ pub fn format_verify_json_report(
 
     let passed = results
         .iter()
-        .filter(|(_, r)| matches!(r, VerificationResult::Passed))
+        .filter(|(_, r)| matches!(r, VerificationResult::Passed { .. }))
         .count();
     let failed = results
         .iter()
@@ -157,8 +165,9 @@ pub fn format_verify_json_report(
         }
 
         match result {
-            VerificationResult::Passed => {
+            VerificationResult::Passed { body_translated } => {
                 result_obj["status"] = json!("passed");
+                result_obj["body_translated"] = json!(body_translated);
             }
             VerificationResult::Failed {
                 contract,
@@ -467,11 +476,20 @@ mod tests {
                 function_name: "witness".to_string(),
                 contracts: vec![],
                 section: Some("1.0".to_string()),
+                spec_name_override: None,
                 formula_anchor: fa,
                 constant_anchor: ca,
                 function_sig: None,
             };
-            let s = format_verify_json_report(&[(f, VerificationResult::Passed)], None);
+            let s = format_verify_json_report(
+                &[(
+                    f,
+                    VerificationResult::Passed {
+                        body_translated: false,
+                    },
+                )],
+                None,
+            );
             assert!(
                 s.contains(&format!("\"anchor_kind\": \"{expect}\"")),
                 "expected anchor_kind {expect} in:\n{s}"
@@ -526,11 +544,17 @@ mod tests {
             function_name: "foo".to_string(),
             contracts: vec![],
             section: Some("6.1".to_string()),
+            spec_name_override: None,
             formula_anchor: None,
             constant_anchor: None,
             function_sig: None,
         };
-        let results = vec![(f, VerificationResult::Passed)];
+        let results = vec![(
+            f,
+            VerificationResult::Passed {
+                body_translated: true,
+            },
+        )];
         let s = format_verify_json_report(&results, None);
         assert!(s.contains("\"passed\": 1"));
         assert!(s.contains("\"total\": 1"));
@@ -543,6 +567,7 @@ mod tests {
             function_name: "foo".to_string(),
             contracts: vec![],
             section: Some("6.1".to_string()),
+            spec_name_override: None,
             formula_anchor: None,
             constant_anchor: None,
             function_sig: None,
@@ -567,6 +592,7 @@ mod tests {
             function_name: "foo".to_string(),
             contracts: vec![],
             section: Some("6.1".to_string()),
+            spec_name_override: None,
             formula_anchor: None,
             constant_anchor: None,
             function_sig: None,
@@ -614,6 +640,7 @@ mod tests {
                 function_name: "foo".to_string(),
                 contracts: vec![],
                 section: Some("6.1".to_string()),
+                spec_name_override: None,
                 formula_anchor: None,
                 constant_anchor: None,
                 function_sig: None,
@@ -656,6 +683,7 @@ mod tests {
                 function_name: "foo".to_string(),
                 contracts: vec![],
                 section: Some("6.1".to_string()),
+                spec_name_override: None,
                 formula_anchor: None,
                 constant_anchor: None,
                 function_sig: None,
@@ -681,6 +709,7 @@ mod tests {
             function_name: "foo".to_string(),
             contracts: vec![],
             section: Some("6.1".to_string()),
+            spec_name_override: None,
             formula_anchor: None,
             constant_anchor: None,
             function_sig: None,
@@ -712,7 +741,7 @@ fn format_junit(results: &[(FunctionToVerify, VerificationResult)]) -> String {
 
     let _passed = results
         .iter()
-        .filter(|(_, r)| matches!(r, VerificationResult::Passed))
+        .filter(|(_, r)| matches!(r, VerificationResult::Passed { .. }))
         .count();
     let failed = results
         .iter()
@@ -746,7 +775,7 @@ fn format_junit(results: &[(FunctionToVerify, VerificationResult)]) -> String {
             .unwrap_or("unknown");
 
         let status_attr = match result {
-            VerificationResult::Passed => "",
+            VerificationResult::Passed { .. } => "",
             VerificationResult::Failed { .. } => " status=\"failed\"",
             VerificationResult::Partial { .. } => " status=\"partial\"",
             VerificationResult::NoContracts { .. } => " status=\"failed\"",
@@ -829,7 +858,7 @@ fn format_markdown(results: &[(FunctionToVerify, VerificationResult)]) -> String
     // Summary
     let passed = results
         .iter()
-        .filter(|(_, r)| matches!(r, VerificationResult::Passed))
+        .filter(|(_, r)| matches!(r, VerificationResult::Passed { .. }))
         .count();
     let failed = results
         .iter()
@@ -865,7 +894,13 @@ fn format_markdown(results: &[(FunctionToVerify, VerificationResult)]) -> String
         let section = func.section.as_deref().unwrap_or("-");
 
         let status = match result {
-            VerificationResult::Passed => "✅ Passed".to_string(),
+            VerificationResult::Passed { body_translated } => {
+                if *body_translated {
+                    "✅ Passed (semantic)".to_string()
+                } else {
+                    "✅ Passed (type-level)".to_string()
+                }
+            }
             VerificationResult::Failed {
                 kind,
                 partial_reason,

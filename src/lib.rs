@@ -118,3 +118,18 @@ pub fn ensures(_args: TokenStream, input: TokenStream) -> TokenStream {
     // Pass through unchanged - verification tool will process these
     input
 }
+
+/// Pass-through macro for #[axiom] attributes
+///
+/// An axiom is a *trusted* assertion about a function's return value.  Unlike
+/// `#[ensures]`, an axiom is not verified from the body — it is asserted as a
+/// hard constraint in the Z3 solver, enabling the corresponding `#[ensures]` to
+/// be discharged.
+///
+/// Use sparingly: only for properties proven correct by human inspection where
+/// the body contains constructs (loops, bitwise parsing) that the translator
+/// cannot fully model.
+#[proc_macro_attribute]
+pub fn axiom(_args: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}

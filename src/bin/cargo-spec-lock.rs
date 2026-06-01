@@ -42,18 +42,36 @@ fn resolve_crate_path(crate_path: Option<PathBuf>) -> PathBuf {
 
 /// Resolve spec paths: --spec-path (can be repeated), or SPEC_LOCK_SPEC_PATH env (comma/colon-separated).
 /// Returns empty Vec if neither set.
+///
+/// Also validates that none of the resolved paths is a directory — directories cannot be
+/// spec Markdown files and are almost always a user error where `--crate-path` was intended
+/// (e.g. `--spec-path PROTOCOL.md VERIFIED.md src/` accidentally passes `src/` here).
 fn resolve_spec_paths(spec_paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    if !spec_paths.is_empty() {
-        return spec_paths;
-    }
-    if let Ok(env_val) = std::env::var("SPEC_LOCK_SPEC_PATH") {
-        return env_val
+    let paths = if !spec_paths.is_empty() {
+        spec_paths
+    } else if let Ok(env_val) = std::env::var("SPEC_LOCK_SPEC_PATH") {
+        env_val
             .split([',', ':'])
             .map(|s| PathBuf::from(s.trim()))
             .filter(|p| !p.as_os_str().is_empty())
-            .collect();
+            .collect()
+    } else {
+        return Vec::new();
+    };
+
+    for p in &paths {
+        if p.is_dir() {
+            eprintln!(
+                "error: --spec-path argument `{}` is a directory, not a Markdown spec file.\n\
+                 Hint: pass the crate/workspace root via --crate-path instead:\n\
+                 \n  cargo spec-lock verify --spec-path PROTOCOL.md --crate-path {}\n",
+                p.display(),
+                p.display(),
+            );
+            std::process::exit(2);
+        }
     }
-    Vec::new()
+    paths
 }
 
 /// When **`Depends on`** cites missing **`F_*`** / **`C_*`**, or **defined **`F_*`→`F_*`** edges form a cycle** (informational).
@@ -769,6 +787,39 @@ fn handle_verify(args: VerifyArgs) -> i32 {
         }
     };
 
+    // Snapshot inline `#[ensures]` and `#[axiom]` contracts BEFORE spec enrichment replaces
+    // them with spec-derived contracts.  Spec enrichment substitutes inline ensures with
+    // spec-derived ones (e.g. `Defined: true`), so the tighter postconditions like
+    // `result >= 0` or `result <= INITIAL_SUBSIDY` would otherwise be lost from the
+    // post-enrichment contract set.
+    //
+    // By capturing them here we can propagate callee-proven postconditions to callers
+    // (wrapper functions that delegate to these implementations) even after enrichment.
+    // This is the data-driven replacement for the old hardcoded `nonneg_callees` list.
+    let callee_postconds: Vec<cli::verify::CalleePostcond> = {
+        use cli::verify::ContractType;
+        all_functions
+            .iter()
+            .flat_map(|f| {
+                f.contracts.iter().filter_map(move |c| {
+                    if (c.contract_type == ContractType::Ensures
+                        || c.contract_type == ContractType::Axiom)
+                        && !c.is_spec_derived
+                        && c.expr.is_some()
+                        && !c.condition.is_empty()
+                    {
+                        Some(cli::verify::CalleePostcond {
+                            function_name: f.function_name.clone(),
+                            condition: c.condition.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect()
+    };
+
     // Spec is single source of truth: --spec-path required for contract derivation
     if !spec_paths.is_empty() {
         match cli::spec_enrich::enrich_functions_with_spec(&mut all_functions, &spec_paths) {
@@ -778,8 +829,10 @@ fn handle_verify(args: VerifyArgs) -> i32 {
                 }
             }
             Err(e) => {
-                eprintln!("Warning: Could not parse spec for contract extraction: {e}");
-                eprintln!("  Continuing with manual contracts only");
+                eprintln!("error: Could not parse spec for contract extraction: {e}");
+                eprintln!("  Fix the spec files passed via --spec-path and retry.");
+                eprintln!("  Common causes: duplicate section IDs across merged spec files.");
+                return 1;
             }
         }
     } else {
@@ -894,15 +947,16 @@ fn handle_verify(args: VerifyArgs) -> i32 {
             formula_registry_for_json = Some((analysis, flags));
         } else {
             eprintln!(
-                "Warning: could not parse merged spec for **`F_*`** registry — skipping formula-only gate (Rust **`verify`** rows still run)"
+                "error: could not parse merged spec for **`F_*`** registry (file not found or parse error)"
             );
+            return 1;
         }
     }
 
     // Verify functions (deterministic iteration order)
     let mut results = Vec::new();
     for func in &sorted {
-        let result = cli::verify::verify_function(func, timeout_secs);
+        let result = cli::verify::verify_function(func, timeout_secs, &callee_postconds);
         results.push((func.clone(), result));
     }
 

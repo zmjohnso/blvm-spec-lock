@@ -1,13 +1,13 @@
 //! Contract AST and parsing
 //!
-//! Defines the structure for verification contracts (requires/ensures)
+//! Defines the structure for verification contracts (requires/ensures/axiom)
 
 use syn::{Attribute, Expr, ItemFn};
 
-/// A verification contract (precondition or postcondition)
+/// A verification contract (precondition, postcondition, or trusted axiom)
 #[derive(Debug, Clone)]
 pub struct Contract {
-    /// Type of contract (requires or ensures)
+    /// Type of contract (requires, ensures, or axiom)
     pub contract_type: ContractType,
     /// The condition expression
     pub condition: Expr,
@@ -22,6 +22,17 @@ pub enum ContractType {
     Requires,
     /// Postcondition: #[ensures(condition)]
     Ensures,
+    /// Trusted axiom: #[axiom(condition)]
+    ///
+    /// An axiom is asserted as a *hard constraint* in the solver rather than
+    /// verified from the body.  Use this sparingly for properties that are
+    /// provably correct by human inspection but whose bodies contain constructs
+    /// (loops, bitwise arithmetic) the Z3 translator cannot fully model.
+    ///
+    /// An axiom enables the corresponding `ensures` to be discharged: the
+    /// ensures formula is negated and checked for satisfiability; the axiom
+    /// makes that negation UNSAT, producing a PASSED result.
+    Axiom,
 }
 
 /// Extract contracts from a function's attributes
@@ -41,8 +52,6 @@ pub fn extract_contracts(func: &ItemFn) -> Vec<Contract> {
 fn parse_contract_attribute(attr: &Attribute) -> Option<Contract> {
     let path = attr.path();
 
-    // Check if it's #[requires(...)] or #[ensures(...)]
-    // Handle both bare attributes and crate-prefixed: #[blvm_spec_lock::requires]
     let is_requires = path.is_ident("requires")
         || (path.segments.len() == 2
             && path.segments[0].ident == "blvm_spec_lock"
@@ -53,8 +62,12 @@ fn parse_contract_attribute(attr: &Attribute) -> Option<Contract> {
             && path.segments[0].ident == "blvm_spec_lock"
             && path.segments[1].ident == "ensures");
 
+    let is_axiom = path.is_ident("axiom")
+        || (path.segments.len() == 2
+            && path.segments[0].ident == "blvm_spec_lock"
+            && path.segments[1].ident == "axiom");
+
     if is_requires {
-        // Parse the condition from the attribute
         if let Ok(expr) = attr.parse_args::<Expr>() {
             return Some(Contract {
                 contract_type: ContractType::Requires,
@@ -66,6 +79,14 @@ fn parse_contract_attribute(attr: &Attribute) -> Option<Contract> {
         if let Ok(expr) = attr.parse_args::<Expr>() {
             return Some(Contract {
                 contract_type: ContractType::Ensures,
+                condition: expr,
+                comment: extract_comment(attr),
+            });
+        }
+    } else if is_axiom {
+        if let Ok(expr) = attr.parse_args::<Expr>() {
+            return Some(Contract {
+                contract_type: ContractType::Axiom,
                 condition: expr,
                 comment: extract_comment(attr),
             });

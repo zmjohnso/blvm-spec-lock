@@ -28,6 +28,9 @@ pub fn check_contract_statically(contract: &Contract) -> Option<StaticCheckResul
     match contract.contract_type {
         ContractType::Requires => check_requires_statically(&contract.condition),
         ContractType::Ensures => check_ensures_statically(&contract.condition),
+        // Axioms are trusted — they are asserted as constraints, not verified.
+        // Treat them like requires for static checking purposes (syntax validation only).
+        ContractType::Axiom => check_requires_statically(&contract.condition),
     }
 }
 
