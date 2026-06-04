@@ -352,8 +352,7 @@ pub fn enrich_functions_with_spec(
                     }
                 }
 
-                let stored_condition =
-                    parseable.clone().unwrap_or_else(|| condition.clone());
+                let stored_condition = parseable.clone().unwrap_or_else(|| condition.clone());
                 let contract = Contract {
                     contract_type,
                     condition: stored_condition.clone(),
@@ -361,7 +360,11 @@ pub fn enrich_functions_with_spec(
                     is_spec_derived: true,
                 };
 
-                if !func.contracts.iter().any(|c| c.condition == stored_condition) {
+                if !func
+                    .contracts
+                    .iter()
+                    .any(|c| c.condition == stored_condition)
+                {
                     func.contracts.push(contract);
                     enriched_count += 1;
                     added_any = true;

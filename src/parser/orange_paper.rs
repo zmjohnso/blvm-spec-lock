@@ -1464,9 +1464,7 @@ impl SpecParser {
         // |result| or |result(args)| (spec cardinality after func rename) → result.len()
         // e.g. §10.1.1 CalculateChecksum: |CalculateChecksum(payload)| = 4 → result.len() == 4
         if let Ok(re) = Regex::new(r"\|result(?:\([^)]*\))?\|\s*==\s*(\d+)") {
-            rust_expr = re
-                .replace_all(&rust_expr, "result.len() == $1")
-                .to_string();
+            rust_expr = re.replace_all(&rust_expr, "result.len() == $1").to_string();
         }
 
         // |x| (cardinality) → x.len()
@@ -1963,8 +1961,8 @@ $$1$$
             )
             .expect("translate");
         assert_eq!(rust, "result.len() == 4");
-        let parsed = crate::parser::condition::extract_parseable_condition(&rust)
-            .expect("parseable");
+        let parsed =
+            crate::parser::condition::extract_parseable_condition(&rust).expect("parseable");
         assert!(
             parsed.contains("result") && parsed.contains("len") && parsed.contains("4"),
             "parsed: {parsed}"
