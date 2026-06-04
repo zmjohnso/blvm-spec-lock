@@ -116,6 +116,13 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         cond = cond.replace(r"\{", "{").replace(r"\}", "}");
     }
 
+    // |result(args)| = N — spec cardinality (§10.1.1 checksum); must precede generic |x| rules.
+    if let Ok(re) = Regex::new(r"\|result\([^)]*\)\|\s*={1,2}\s*(\d+)") {
+        if let Some(cap) = re.captures(&cond) {
+            return Some(format!("result.len() == {}", cap.get(1).unwrap().as_str()));
+        }
+    }
+
     // Noise fragments: accept as "true" so they don't inflate unparseable count
     if let Some("noise") = classify_noise(&cond) {
         return Some("true".to_string());
@@ -243,8 +250,9 @@ pub fn extract_parseable_condition(condition: &str) -> Option<String> {
         ("produces identical results", "true"),
         ("produce identical results", "true"),
         ("round-trip", "true"),
-        ("|result| = 4", "true"), // 4-byte result (e.g. locktime)
-        ("result is 4 bytes", "true"),
+        ("|result| = 4", "result.len() == 4"), // 4-byte return (checksum, locktime bytes)
+        ("|result| == 4", "result.len() == 4"),
+        ("result is 4 bytes", "result.len() == 4"),
     ];
     for (pattern, rust) in descriptive_patterns {
         if cond.contains(pattern) && cond.len() < 120 {
@@ -775,6 +783,14 @@ mod tests {
             extract_parseable_condition(escaped),
             Some("(result == true || result == false)".to_string()),
             "escaped-brace form \\in \\{{...\\}} must parse"
+        );
+    }
+
+    #[test]
+    fn result_cardinality_with_args() {
+        assert_eq!(
+            extract_parseable_condition("|result(payload)| == 4"),
+            Some("result.len() == 4".to_string())
         );
     }
 

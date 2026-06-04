@@ -68,6 +68,28 @@ fn golden_path(name: &str) -> PathBuf {
 }
 
 #[test]
+fn protocol_calculate_checksum_contracts() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../blvm-spec/PROTOCOL.md");
+    if !path.exists() {
+        return;
+    }
+    let parser = SpecParser::from_paths(&[&path]).expect("parse PROTOCOL.md");
+    let func = parser
+        .find_function("10.1.1", Some("CalculateChecksum"))
+        .expect("CalculateChecksum in 10.1.1");
+    for ctr in &func.contracts {
+        eprintln!("contract {:?}: {}", ctr.contract_type, ctr.condition);
+    }
+    assert!(
+        func.contracts
+            .iter()
+            .all(|c| !c.condition.contains("|result")),
+        "contracts must use result.len(), got: {:?}",
+        func.contracts
+    );
+}
+
+#[test]
 fn golden_minimal_function() {
     let path = golden_path("minimal_function");
     let parser = SpecParser::from_paths(&[&path]).expect("parse golden minimal_function");

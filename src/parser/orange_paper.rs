@@ -1461,6 +1461,14 @@ impl SpecParser {
             rust_expr = rust_expr[..len - 2].to_string() + " ==";
         }
 
+        // |result| or |result(args)| (spec cardinality after func rename) → result.len()
+        // e.g. §10.1.1 CalculateChecksum: |CalculateChecksum(payload)| = 4 → result.len() == 4
+        if let Ok(re) = Regex::new(r"\|result(?:\([^)]*\))?\|\s*==\s*(\d+)") {
+            rust_expr = re
+                .replace_all(&rust_expr, "result.len() == $1")
+                .to_string();
+        }
+
         // |x| (cardinality) → x.len()
         let cardinality_re = Regex::new(r"\|([a-zA-Z_][a-zA-Z0-9_]*)\|").ok();
         if let Some(re) = cardinality_re {
@@ -1943,6 +1951,39 @@ $$1$$
             "Formula must not appear as bogus FunctionSpec"
         );
         assert!(p.formulas().contains_key("F_Only"));
+    }
+
+    #[test]
+    fn translate_checksum_cardinality_property() {
+        let parser = SpecParser::new(String::new());
+        let rust = parser
+            .translate_property_to_rust(
+                r"|\text{CalculateChecksum}(payload)| = 4",
+                "CalculateChecksum",
+            )
+            .expect("translate");
+        assert_eq!(rust, "result.len() == 4");
+        let parsed = crate::parser::condition::extract_parseable_condition(&rust)
+            .expect("parseable");
+        assert!(
+            parsed.contains("result") && parsed.contains("len") && parsed.contains("4"),
+            "parsed: {parsed}"
+        );
+    }
+
+    #[test]
+    fn translate_checksum_cardinality_property_dollar_wrapped() {
+        let parser = SpecParser::new(String::new());
+        let rust = parser
+            .translate_property_to_rust(
+                r"$|\text{CalculateChecksum}(payload)| = 4$",
+                "CalculateChecksum",
+            )
+            .expect("translate");
+        assert_eq!(
+            rust, "result.len() == 4",
+            "dollar-wrapped spec property must not leave |result(payload)|"
+        );
     }
 }
 
